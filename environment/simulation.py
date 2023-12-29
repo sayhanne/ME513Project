@@ -18,6 +18,13 @@ class Environment:
         self.robot: raisim.ArticulatedSystem = self.world.addArticulatedSystem(robot_urdf_file)
         self.trajectory_data = {'pos': [], 'vel': [], 'torque': []}
 
+        # TODO: fix gains!!!
+        self.p_gain_ref = np.array([200, 800, 200, 1000, 200, 200, 200, 0.1, 0.1])
+        self.d_gain_ref = np.array([10, 50, 10, 100, 10, 10, 10, 0.01, 0.01])
+        self.p_gain = np.array([200, 1000, 200, 2000, 200, 200, 200, 0.1, 0.1])
+        self.d_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
+
+
     def record_data(self):
         # time = self.world.getSimulationTime()self.
         pos = self.robot.getGeneralizedCoordinate()
@@ -31,14 +38,13 @@ class Environment:
 
     def reset_robot(self):
         # initial position
-        # angle = np.array([0, 0.307, 0, -2.7, 0, 3, -2.356, 0, 0, 0.1, 0.1])  # Last 2 joints are prismatic.
-        angle = np.array([0, -0.785, 0, -2.356, 0 , 1.5708,  1.5708, 0, 0, 0.1, 0.1])
-        print(env.robot.getFramePosition(11))
+        angle = np.array([0, -0.785, 0, -2.356, 0, 1.5708,  0.7853, 0, 0, 0.1, 0.1])      # Last 2 joints are prismatic.
         self.robot.setGeneralizedCoordinate(angle[:-2])
-        self.robot.setPdGains([200, 200, 200, 200, 200, 200, 200, 0.1, 0.1], [10, 10, 10, 10, 10, 10, 10, 0.01, 0.01])
+        self.robot.setPdGains(self.p_gain_ref, self.d_gain_ref)
         self.robot.setPdTarget(angle[:-2], np.zeros([9]))
+        return self.robot.getFramePosition(11)      # return initial end-effector pos
 
-    def spawn_objects(self):
+    def spawn_object(self):
         pass
 
     def trajectory_planning(self, real_time, t_start, t_end, timestep, pos_start, pos_end,
@@ -54,8 +60,8 @@ class Environment:
                                                                    z01=pos_start[dim], v01=0, a01=0,
                                                                    z02=pos_end[dim], v02=0, a02=0, dt=timestep)
             eul_ref[dim], deul_ref[dim], ddeul_ref[dim] = FuncPoly5th(RealTime=real_time, tstart=t_start, te=t_end,
-                                                                   z01=euler_start[dim], v01=0, a01=0,
-                                                                   z02=euler_end[dim], v02=0, a02=0, dt=timestep)
+                                                                      z01=euler_start[dim], v01=0, a01=0,
+                                                                      z02=euler_end[dim], v02=0, a02=0, dt=timestep)
         twist = np.zeros((6, 1))
         twist[0] = vel_ref[0]
         twist[1] = vel_ref[1]
@@ -63,7 +69,6 @@ class Environment:
         twist[3] = deul_ref[0] + deul_ref[2] * math.sin(eul_ref[1])
         twist[4] = deul_ref[1] * math.cos(eul_ref[0]) - deul_ref[2] * math.cos(eul_ref[1]) * math.sin(eul_ref[0])
         twist[5] = deul_ref[1] * math.sin(eul_ref[0]) + deul_ref[2] * math.cos(eul_ref[0]) * math.sin(eul_ref[1])
-        # TODO: angular velocity
         q = env.robot.getGeneralizedCoordinate()
         jac = Franka_Jacobian(q[0], q[1], q[2], q[3], q[4], q[5], q[6])
         return jac, twist
@@ -75,7 +80,7 @@ class Environment:
         joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0, 0])) - joint_vel_cur
 
         tau = p_gain * joint_angle_err + d_gain * joint_vel_err
-        self.robot.setGeneralizedForce(tau)
+        self.robot.setGeneralizedForce(tau*10)
         self.record_data()
 
 
@@ -84,29 +89,24 @@ if __name__ == '__main__':
     env = Environment(timestep=dt)
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
-    visBox = server.addVisualBox("t_box", 1, 1, 1, 1, 1, 1, 1)
-    visBox.setBoxSize(1, 1 , 0.5)
-    BoxPosition = [0.7 , 0 , 0.]
-    visBox.setPosition(BoxPosition)
+    table = server.addVisualBox("table", 1, 1, 0.3, 1, 1, 1, 1)
+    table_pos = [0.7, 0, 0.15]
+    table.setPosition(table_pos)
 
-    ObjBox = server.addVisualBox("o_box", 1, 1, 1, 1, 0., 0., 1)
-    ObjBox.setBoxSize(0.05, 0.05, 0.05)
-    # color = [0.1, 0.1, 0.1]
-    # ObjBox.setColor()
-    ObjBoxPosition = [0.7 , 0.1 , 0.275 ]
-    ObjBox.setPosition(ObjBoxPosition)
-    env.reset_robot()
-    p_gain_ref = np.array([200, 200, 200, 200, 200, 200, 200, 0.1, 0.1])
-    d_gain_ref = np.array([10, 10, 10, 10, 10, 10, 10, 0.01, 0.01])
+    cube = server.addVisualBox("cube", 0.05, 0.05, 0.05, 1, 0., 0., 1)
+    cube_pos = [0.5, 0.2, 0.325]
+    # cube_pos = [0.5, -0.2, 0.325]
+    cube.setPosition(cube_pos)
 
     prev_dq_ref = np.zeros((7, 1))
     dq_ref = np.zeros((7, 1))
     prev_q_ref = np.zeros((7, 1))
-    q_ref = np.expand_dims(np.array([0, 0.307, 0, -2.7, 0, 3, -2.356]), axis=1)
-    # pos_start_ = [3.94668356e-01, 2.61303697e-16, 10.32223621e-01]
-    pos_start_ = [8.8000000e-02, 5.5897103e-17 ,9.2600000e-01]
-    # pos_end_ = [3.94668356e-01, 2.61303697e-16, 12.32223621e-01]
-    pos_end_ = ObjBoxPosition
+    q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.5708,  0.7853]), axis=1)
+    pos_start_ = env.reset_robot()
+    pos_end_ = cube_pos
+    # pos_end_[0] += 0.01     # x-axis offset
+    # pos_end_[1] += 0.02     # y-axis offset
+    pos_end_[2] += 0.13     # z-axis offset
     euler_start_ = [0., 0., 0.]
     euler_end_ = [2, 2, 0.2]
 
@@ -114,15 +114,15 @@ if __name__ == '__main__':
         rt = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
         # print("Real time", rt)
-        jac_res, twist_res = env.trajectory_planning(real_time=rt, t_start=3, t_end=7, timestep=dt,
-                                                     pos_start=pos_start_,
-                                                     pos_end=pos_end_ , euler_start=euler_start_ , euler_end= euler_end_ )
+        jac_res, twist_res = env.trajectory_planning(real_time=rt, t_start=3, t_end=10, timestep=dt,
+                                                     pos_start=pos_start_, pos_end=pos_end_,
+                                                     euler_start=euler_start_, euler_end=euler_start_)
         prev_dq_ref = dq_ref
         dq_ref = np.linalg.lstsq(jac_res, twist_res, rcond=None)[0]
         prev_q_ref = q_ref
-        q_ref = np.add(np.add(prev_dq_ref, dq_ref) * dt * 0.5, prev_q_ref)      # Integral
+        q_ref = np.add(np.add(prev_dq_ref, dq_ref) * dt * 0.5, prev_q_ref)  # Integral
         env.set_force(target_joint_angle=q_ref, target_joint_vel=dq_ref,
-                      p_gain=p_gain_ref, d_gain=d_gain_ref)
+                      p_gain=env.p_gain, d_gain=env.d_gain)
         time.sleep(dt)
     np.save('traj.npy', env.trajectory_data)
     server.killServer()
