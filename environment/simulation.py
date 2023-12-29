@@ -18,12 +18,23 @@ class Environment:
         self.robot: raisim.ArticulatedSystem = self.world.addArticulatedSystem(robot_urdf_file)
         self.trajectory_data = {'pos': [], 'vel': [], 'torque': []}
 
+        # Objects
+        self.table = self.world.addBox(x=1, y=1, z=0.3, mass=10, material='default', collision_group=1)
+        table_pos = [0.7, 0, 0.15]
+        self.table.setPosition(table_pos)
+        self.table.setName("table")
+
+        self.cube = self.world.addBox(x=0.05, y=0.05, z=0.05, mass=0.5, material='default', collision_group=2)
+        cube_pos = [0.5, 0.2, 0.325]
+        self.cube.setPosition(cube_pos)
+        self.cube.setName("cube")
+        self.cube.setAppearance("red")
+
         # TODO: fix gains!!!
-        self.p_gain_ref = np.array([200, 800, 200, 1000, 200, 200, 200, 0.1, 0.1])
-        self.d_gain_ref = np.array([10, 50, 10, 100, 10, 10, 10, 0.01, 0.01])
+        self.p_gain_ref = np.array([200, 500, 200, 500, 200, 200, 200, 0.1, 0.1])
+        self.d_gain_ref = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
         self.p_gain = np.array([200, 1000, 200, 2000, 200, 200, 200, 0.1, 0.1])
         self.d_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
-
 
     def record_data(self):
         # time = self.world.getSimulationTime()self.
@@ -38,11 +49,11 @@ class Environment:
 
     def reset_robot(self):
         # initial position
-        angle = np.array([0, -0.785, 0, -2.356, 0, 1.5708,  0.7853, 0, 0, 0.1, 0.1])      # Last 2 joints are prismatic.
+        angle = np.array([0, -0.785, 0, -2.356, 0, 1.5708, 0.7853, 0, 0, 0.1, 0.1])  # Last 2 joints are prismatic.
         self.robot.setGeneralizedCoordinate(angle[:-2])
         self.robot.setPdGains(self.p_gain_ref, self.d_gain_ref)
         self.robot.setPdTarget(angle[:-2], np.zeros([9]))
-        return self.robot.getFramePosition(11)      # return initial end-effector pos
+        return self.robot.getFramePosition(11)  # return initial end-effector pos
 
     def spawn_object(self):
         pass
@@ -80,33 +91,27 @@ class Environment:
         joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0, 0])) - joint_vel_cur
 
         tau = p_gain * joint_angle_err + d_gain * joint_vel_err
-        self.robot.setGeneralizedForce(tau*10)
+        self.robot.setGeneralizedForce(tau * 10)
         self.record_data()
 
 
 if __name__ == '__main__':
     dt = 0.001
     env = Environment(timestep=dt)
-    server = raisim.RaisimServer(env.world)
-    server.launchServer(8080)
-    table = server.addVisualBox("table", 1, 1, 0.3, 1, 1, 1, 1)
-    table_pos = [0.7, 0, 0.15]
-    table.setPosition(table_pos)
-
-    cube = server.addVisualBox("cube", 0.05, 0.05, 0.05, 1, 0., 0., 1)
-    cube_pos = [0.5, 0.2, 0.325]
-    # cube_pos = [0.5, -0.2, 0.325]
-    cube.setPosition(cube_pos)
 
     prev_dq_ref = np.zeros((7, 1))
     dq_ref = np.zeros((7, 1))
     prev_q_ref = np.zeros((7, 1))
-    q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.5708,  0.7853]), axis=1)
+    q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.5708, 0.7853]), axis=1)
+
+    server = raisim.RaisimServer(env.world)
+    server.launchServer(8080)
     pos_start_ = env.reset_robot()
+    cube_pos = env.cube.getPosition()
     pos_end_ = cube_pos
     # pos_end_[0] += 0.01     # x-axis offset
     # pos_end_[1] += 0.02     # y-axis offset
-    pos_end_[2] += 0.13     # z-axis offset
+    pos_end_[2] += 0.13  # z-axis offset
     euler_start_ = [0., 0., 0.]
     euler_end_ = [2, 2, 0.2]
 
@@ -124,5 +129,5 @@ if __name__ == '__main__':
         env.set_force(target_joint_angle=q_ref, target_joint_vel=dq_ref,
                       p_gain=env.p_gain, d_gain=env.d_gain)
         time.sleep(dt)
-    np.save('traj.npy', env.trajectory_data)
-    server.killServer()
+    # np.save('traj.npy', env.trajectory_data)
+    # server.killServer()
