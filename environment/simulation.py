@@ -3,7 +3,7 @@ import os
 import numpy as np
 import raisimpy as raisim
 import time
-from Franka_Jac_Calculation import Franka_Jacobian
+from environment.Franka_Jac_Calculation import Franka_Jacobian
 from FuncPoly5th import FuncPoly5th
 
 
