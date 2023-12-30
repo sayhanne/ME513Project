@@ -8,7 +8,7 @@ from FuncPoly5th import FuncPoly5th
 
 
 class Environment:
-    def __init__(self, robot_path='/raisimLib/rsc/Panda/panda_nogrip.urdf',
+    def __init__(self, robot_path='/raisimLib/rsc/Panda/panda.urdf',
                  raisim_act_path="/../raisimLib/rsc/activation.raisim", timestep=0.001):
         raisim.World.setLicenseFile(os.path.dirname(os.path.abspath(__file__)) + raisim_act_path)
         self.world = raisim.World()
@@ -98,6 +98,7 @@ class Environment:
 if __name__ == '__main__':
     dt = 0.001
     env = Environment(timestep=dt)
+    print(env.robot.getFrameIdxByName("panda_hand_joint"))
 
     prev_dq_ref = np.zeros((7, 1))
     dq_ref = np.zeros((7, 1))
@@ -111,14 +112,13 @@ if __name__ == '__main__':
     pos_end_ = cube_pos
     # pos_end_[0] += 0.01     # x-axis offset
     # pos_end_[1] += 0.02     # y-axis offset
-    pos_end_[2] += 0.13  # z-axis offset
+    pos_end_[2] += 0.14  # z-axis offset
     euler_start_ = [0., 0., 0.]
     euler_end_ = [2, 2, 0.2]
 
     while True:
         rt = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
-        # print("Real time", rt)
         jac_res, twist_res = env.trajectory_planning(real_time=rt, t_start=3, t_end=10, timestep=dt,
                                                      pos_start=pos_start_, pos_end=pos_end_,
                                                      euler_start=euler_start_, euler_end=euler_start_)
