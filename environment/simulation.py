@@ -19,22 +19,21 @@ class Environment:
         self.trajectory_data = {'pos': [], 'vel': [], 'torque': []}
 
         # Objects
-        self.table: raisim.Box = self.world.addBox(x=1, y=1, z=0.3, mass=10, material='default', collision_group=1)
-        table_pos = [0.7, 0, 0.15]
+        self.table: raisim.Box = self.world.addBox(x=0.8, y=0.8, z=0.2, mass=10, material='default')
+        table_pos = [0.7, 0, 0.1]
         self.table.setPosition(table_pos)
         self.table.setName("table")
 
-        self.cube: raisim.Box = self.world.addBox(x=0.05, y=0.05, z=0.05, mass=0.5, material='default',
-                                                  collision_group=2)
-        cube_pos = [0.5, -0.2, 0.325]
+        self.cube: raisim.Box = self.world.addBox(x=0.035, y=0.035, z=0.03, mass=0.001, material='default')
+        cube_pos = [0.5, -0.2, 0.215]
         self.cube.setPosition(cube_pos)
         self.cube.setName("cube")
         self.cube.setAppearance("red")
 
         # TODO: fix gains!!!
-        self.p_gain_ref = np.array([200, 500, 200, 500, 200, 200, 200, 0.1, 0.1])
+        self.p_gain_ref = np.array([200, 500, 200, 500, 200, 200, 200, 200, 200])
         self.d_gain_ref = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
-        self.p_gain = np.array([200, 1000, 200, 2000, 200, 200, 200, 0.1, 0.1])
+        self.p_gain = np.array([200, 1000, 200, 2000, 200, 200, 200, 100, 100])
         self.d_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
 
         # q_ref, prev_q_ref, dq_ref, prev_dq_ref
@@ -65,12 +64,11 @@ class Environment:
         self.robot.setPdTarget(angle[:-2], np.zeros([9]))
         return self.robot.getFramePosition(11)  # return hand position
 
-    def get_pick_pos(self):
-        cube_pos = self.cube.getPosition()
+    def get_target_pos(self, cube_pos):
         pos_end = cube_pos
-        # pos_end[0] += 0.01     # x-axis offset
-        pos_end[1] += np.sign(pos_end[1]) * 0.02  # y-axis offset
-        pos_end[2] += 0.14  # z-axis offset
+        pos_end[0] += 0.012  # x-axis offset
+        pos_end[1] += np.sign(pos_end[1]) * 0.015  # y-axis offset
+        pos_end[2] += 0.13  # z-axis offset
         return pos_end
 
     def control(self, jac, twist):
@@ -118,16 +116,16 @@ class Environment:
         # self.record_data()
 
     def open_gripper(self):
-        angles = self.robot.getGeneralizedCoordinate()
-        angles[-2:] = [0.04, 0.04]
         self.gripper_angles = [0.04, 0.04]
-        self.robot.setGeneralizedCoordinate(angles)
 
     def close_gripper(self):
-        angles = self.robot.getGeneralizedCoordinate()
-        angles[-2:] = [0., 0.]
-        self.gripper_angles = [0., 0.]
-        self.robot.setGeneralizedCoordinate(angles)
+        self.gripper_angles = [0.012, 0.012]
+
+    def done(self, target_pos):
+        if np.linalg.norm(target_pos - self.robot.getFramePosition(11)) <= 0.01:
+            return True
+        else:
+            return False
 
 
 if __name__ == '__main__':
@@ -137,42 +135,153 @@ if __name__ == '__main__':
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
     pos_start_ = env.reset_robot()
-    pos_end_ = env.get_pick_pos()
+    home_pos = pos_start_.copy()
+    target_pos_end_ = env.get_target_pos(env.cube.getPosition())
+    release_pos = [0.7, -0.2, 0.325]
     euler_start_ = [0., 0., 0.]
     # euler_end_ = [2, 2, 0.2]
-    ts = 1
+    ts = 0.1
     reach_time = 5
     te = ts + reach_time
     reached = False
-    picking = False
     picked = False
-    placed = False
-    released = False
+    lifted = False
+    moved = False
+    releasing = False
+    resetting = False
+    placed = True
+
+    set_targets = True
+    iterations = 0
     print("Starting the loop!")
 
     while True:
         rt = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
-        if not reached and np.linalg.norm(pos_end_ - env.robot.getFramePosition(11)) <= 0.02:
-            reached = True
 
-        if reached and not picking:
-            print("Starting pick!")
-            env.open_gripper()
-            ts = np.ceil(rt)
-            te = ts + 2
-            pos_start_ = env.robot.getFramePosition(11)
-            pos_end_ = pos_start_.copy()
-            pos_end_[2] -= 0.05
-            picking = True
+        if placed:
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Reached pick position")
+                reached = True
+                placed = False
+                iterations = 0
+            else:
+                iterations += 1
 
-        if not picked and np.linalg.norm(pos_end_ - env.robot.getFramePosition(11)) <= 0.01:
-            print("Close grip")
-            env.close_gripper()
-            picked = True
+        elif reached:
+            if set_targets:
+                env.open_gripper()
+                ts = np.ceil(rt)
+                te = ts + 3
+                pos_start_ = env.robot.getFramePosition(11)
+                target_pos_end_ = pos_start_.copy()
+                target_pos_end_[2] -= 0.045
+                set_targets = False
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Picked")
+                picked = True
+                reached = False
+                set_targets = True
+                iterations = 0
+            else:
+                iterations += 1
+
+        elif picked:
+            if set_targets:
+                env.close_gripper()
+                ts = np.ceil(rt)
+                te = ts + 2
+                pos_start_ = env.robot.getFramePosition(11)
+                target_pos_end_ = pos_start_.copy()
+                target_pos_end_[2] += 0.1
+                set_targets = False
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Lifted")
+                lifted = True
+                picked = False
+                set_targets = True
+                iterations = 0
+            else:
+                iterations += 1
+
+        elif lifted:
+            if set_targets:
+                ts = np.ceil(rt)
+                te = ts + 5
+                pos_start_ = env.robot.getFramePosition(11)
+                target_pos_end_ = env.get_target_pos(release_pos)
+                set_targets = False
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Moved")
+                moved = True
+                lifted = False
+                set_targets = True
+                iterations = 0
+            else:
+                iterations += 1
+
+        elif moved:
+            if set_targets:
+                ts = np.ceil(rt)
+                te = ts + 3
+                pos_start_ = env.robot.getFramePosition(11)
+                target_pos_end_ = pos_start_.copy()
+                target_pos_end_[2] -= 0.15
+                set_targets = False
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Lowered")
+                releasing = True
+                moved = False
+                set_targets = True
+                iterations = 0
+            else:
+                iterations += 1
+
+        elif releasing:
+            if set_targets:
+                env.open_gripper()
+                ts = np.ceil(rt)
+                te = ts + 2
+                pos_start_ = env.robot.getFramePosition(11)
+                target_pos_end_ = pos_start_.copy()
+                target_pos_end_[2] += 0.1
+                set_targets = False
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Released")
+                resetting = True
+                releasing = False
+                set_targets = True
+                iterations = 0
+            else:
+                iterations += 1
+
+        elif resetting:
+            if set_targets:
+                env.close_gripper()
+                ts = np.ceil(rt)
+                te = ts + 5
+                pos_start_ = env.robot.getFramePosition(11)
+                target_pos_end_ = home_pos.copy()
+                set_targets = False
+            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
+                print("Reset to home position")
+                placed = True
+                resetting = False
+                set_targets = True
+                iterations = 0
+
+                # TODO: For the next episode just change line below (cube position) and the (release_pos) variable
+                env.cube.setPosition([0.5, -0.2, 0.215])
+                pos_start_ = env.robot.getFramePosition(11)
+                home_pos = pos_start_.copy()
+                target_pos_end_ = env.get_target_pos(env.cube.getPosition())
+                ts = np.ceil(rt)
+                te = ts + 5
+            else:
+                iterations += 1
 
         jac_res, twist_res = env.trajectory_planning(real_time=rt, t_start=ts, t_end=te, timestep=dt,
-                                                     pos_start=pos_start_, pos_end=pos_end_,
+                                                     pos_start=pos_start_, pos_end=target_pos_end_,
                                                      euler_start=euler_start_, euler_end=euler_start_)
 
         env.control(jac_res, twist_res)
