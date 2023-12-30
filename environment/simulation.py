@@ -43,6 +43,8 @@ class Environment:
         self.prev_q_ref = np.zeros((7, 1))
         self.q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.5708, 0.7853]), axis=1)
 
+        self.gripper_angles = [0., 0.]
+
     def record_data(self):
         # time = self.world.getSimulationTime()self.
         pos = self.robot.getGeneralizedCoordinate()
@@ -108,21 +110,23 @@ class Environment:
     def set_force(self, target_joint_angle, target_joint_vel, p_gain, d_gain):
         joint_angle_cur = self.robot.getGeneralizedCoordinate()
         joint_vel_cur = self.robot.getGeneralizedVelocity()
-        joint_angle_err = np.hstack((target_joint_angle.squeeze(), [0, 0])) - joint_angle_cur
+        joint_angle_err = np.hstack((target_joint_angle.squeeze(), self.gripper_angles)) - joint_angle_cur
         joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0, 0])) - joint_vel_cur
 
         tau = p_gain * joint_angle_err + d_gain * joint_vel_err
         self.robot.setGeneralizedForce(tau * 10)
-        self.record_data()
+        # self.record_data()
 
     def open_gripper(self):
         angles = self.robot.getGeneralizedCoordinate()
-        angles[-2:] = [0.035, 0.035]
+        angles[-2:] = [0.04, 0.04]
+        self.gripper_angles = [0.04, 0.04]
         self.robot.setGeneralizedCoordinate(angles)
 
     def close_gripper(self):
         angles = self.robot.getGeneralizedCoordinate()
         angles[-2:] = [0., 0.]
+        self.gripper_angles = [0., 0.]
         self.robot.setGeneralizedCoordinate(angles)
 
 
@@ -139,13 +143,38 @@ if __name__ == '__main__':
     ts = 1
     reach_time = 5
     te = ts + reach_time
+    reached = False
+    picking = False
+    picked = False
+    placed = False
+    released = False
+    print("Starting the loop!")
 
     while True:
         rt = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
+        if not reached and np.linalg.norm(pos_end_ - env.robot.getFramePosition(11)) <= 0.02:
+            reached = True
+
+        if reached and not picking:
+            print("Starting pick!")
+            env.open_gripper()
+            ts = np.ceil(rt)
+            te = ts + 2
+            pos_start_ = env.robot.getFramePosition(11)
+            pos_end_ = pos_start_.copy()
+            pos_end_[2] -= 0.05
+            picking = True
+
+        if not picked and np.linalg.norm(pos_end_ - env.robot.getFramePosition(11)) <= 0.01:
+            print("Close grip")
+            env.close_gripper()
+            picked = True
+
         jac_res, twist_res = env.trajectory_planning(real_time=rt, t_start=ts, t_end=te, timestep=dt,
                                                      pos_start=pos_start_, pos_end=pos_end_,
                                                      euler_start=euler_start_, euler_end=euler_start_)
+
         env.control(jac_res, twist_res)
 
         time.sleep(dt)
