@@ -131,9 +131,9 @@ class Environment:
 if __name__ == '__main__':
     dt = 0.001
     env = Environment(timestep=dt)
-
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
+
     pos_start_ = env.reset_robot()
     home_pos = pos_start_.copy()
     target_pos_end_ = env.get_target_pos(env.cube.getPosition())
