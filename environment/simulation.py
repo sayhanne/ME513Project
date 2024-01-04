@@ -1,5 +1,8 @@
 import math
 import os
+import random
+
+import matplotlib.pyplot as plt
 import numpy as np
 import raisimpy as raisim
 import time
@@ -8,74 +11,323 @@ from FuncPoly5th import FuncPoly5th
 
 
 class Environment:
-    def __init__(self, robot_path='/raisimLib/rsc/Panda/panda.urdf',
-                 raisim_act_path="/../raisimLib/rsc/activation.raisim", timestep=0.001):
+    def __init__(self, grid_path='/raisimLib/rsc/Panda/grid.urdf',
+                 robot_path='/raisimLib/rsc/Panda/panda.urdf',
+                 raisim_act_path="/../raisimLib/rsc/activation.raisim",
+                 timestep=0.001):
         raisim.World.setLicenseFile(os.path.dirname(os.path.abspath(__file__)) + raisim_act_path)
         self.world = raisim.World()
-        self.world.setTimeStep(timestep)
+        self.timestep = timestep
+        self.world.setTimeStep(self.timestep)
         self.world.addGround()
+        grid_urdf_file = os.environ['WORKSPACE'] + grid_path
         robot_urdf_file = os.environ['WORKSPACE'] + robot_path
         self.robot: raisim.ArticulatedSystem = self.world.addArticulatedSystem(robot_urdf_file)
-        self.trajectory_data = {'pos': [], 'vel': [], 'torque': []}
 
-        # Objects
-        self.table: raisim.Box = self.world.addBox(x=0.8, y=0.8, z=0.2, mass=10, material='default')
-        table_pos = [0.7, 0, 0.1]
-        self.table.setPosition(table_pos)
-        self.table.setName("table")
+        # self.grid: raisim.ArticulatedSystem = self.world.addArticulatedSystem(grid_urdf_file)
+        # self.grid2: raisim.ArticulatedSystem = self.world.addArticulatedSystem(grid_urdf_file)
 
-        self.cube: raisim.Box = self.world.addBox(x=0.035, y=0.035, z=0.03, mass=0.001, material='default')
-        cube_pos = [0.5, -0.2, 0.215]
-        self.cube.setPosition(cube_pos)
-        self.cube.setName("cube")
-        self.cube.setAppearance("red")
+        self.cube = None
+        self.table = None
+        self.cube_target = None
 
-        # TODO: fix gains!!!
-        self.p_gain_ref = np.array([200, 500, 200, 500, 200, 200, 200, 200, 200])
-        self.d_gain_ref = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
-        self.p_gain = np.array([200, 1000, 200, 2000, 200, 200, 200, 100, 100])
+        # States
+        self.reached = False
+        self.picked = False
+        self.lifted = False
+        self.carried = False
+        self.lowered = False
+        self.placed = False
+        self.reset_done = True
+        self.set_targets = True
+
+        self.home_pos = np.zeros(3)
+        self.pick_pos = np.zeros(3)
+        self.place_pos = np.zeros(3)
+        self.current_pos = np.zeros(3)
+        self.target_pos = np.zeros(3)
+        self.start_pos = np.zeros(3)
+
+        self.iterations = 0
+        self.t_start = 0.1
+        self.t_end = 0
+
+        self.realtime = 0
+        self.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
+
+        self.p_gain_ref = np.array([200, 1000, 200, 1500, 200, 200, 200, 10, 10])
+        self.d_gain_ref = np.array([10, 80, 10, 100, 10, 10, 10, 0.01, 0.01])
+        self.p_gain = np.array([300, 3000, 300, 3000, 300, 300, 300, 10, 10])
         self.d_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
 
         # q_ref, prev_q_ref, dq_ref, prev_dq_ref
         self.prev_dq_ref = np.zeros((7, 1))
         self.dq_ref = np.zeros((7, 1))
         self.prev_q_ref = np.zeros((7, 1))
-        self.q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.5708, 0.7853]), axis=1)
+        self.q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853]), axis=1)
 
         self.gripper_angles = [0., 0.]
 
+        # Grid settings
+        self.pick_points = None
+        self.place_points = None
+        self.grid_1_i = 0
+        self.grid_2_i = 0
+        self.curr_joint_angle = []
+        self.curr_joint_vel = []
+        self.target_angle = []
+        self.target_velocity = []
+
+    def create_grid(self):
+        pick_x_range = np.linspace(0.4, 0.6, 4)
+        pick_y_range = np.linspace(-0.1, -0.2, 4)
+        fixed_z = 0.215
+        grid_1, grid_2 = np.meshgrid(pick_x_range, pick_y_range)
+        self.pick_points = np.array(list(zip(grid_1.flatten(), grid_2.flatten(), [fixed_z] * len(grid_1.flatten()))))
+        # pick position
+        place_x_range = np.linspace(0.4, 0.6, 4)
+        place_y_range = np.linspace(0.1, 0.2, 4)
+        fixed_z = 0.215
+        grid_1, grid_2 = np.meshgrid(place_x_range, place_y_range)
+        self.place_points = np.array(list(zip(grid_1.flatten(), grid_2.flatten(), [fixed_z] * len(grid_1.flatten()))))
+
+        # for i in range(len(self.pick_points)):
+        #     s = self.world.addCylinder(radius=0.0025, height=0.0001, mass=10)
+        #     pos = self.pick_points[i].copy()
+        #     pos[2] = 0.2 + 0.00006
+        #     s.setPosition(pos)
+        #     s.setAppearance("blue")
+        #     # self.grid_1_spheres.append(s)
+        # for i in range(len(self.place_points)):
+        #     s = self.world.addCylinder(radius=0.0025, height=0.0001, mass=10)
+        #     pos = self.place_points[i].copy()
+        #     pos[2] = 0.2 + 0.00006
+        #     s.setPosition(pos)
+        #     s.setAppearance("green")
+        #     # self.grid_2_spheres.append(s)
+
     def record_data(self):
         # time = self.world.getSimulationTime()self.
-        pos = self.robot.getGeneralizedCoordinate()
+        pos = self.robot.getFramePosition(11)
+        angle = self.robot.getGeneralizedCoordinate()
         vel = self.robot.getGeneralizedVelocity()
         torque = self.robot.getGeneralizedForce()
 
         # self.trajectory_data['time'].append(time)
         self.trajectory_data['pos'].append(pos)
-        self.trajectory_data['vel'].append(vel)
+        self.trajectory_data['joint_angle'].append(angle)
+        self.trajectory_data['joint_velocity'].append(vel)
         self.trajectory_data['torque'].append(torque)
 
     def reset_robot(self):
         # initial position
-        angle = np.array([0, -0.785, 0, -2.356, 0, 1.5708, 0.7853, 0, 0, 0.1,
-                          0.1])  # Last 2 joints are prismatic. Hand joint and joint 8 are fixed.
-        self.robot.setGeneralizedCoordinate(angle[:-2])
+        q = np.expand_dims([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853], axis=1)
+        vel = np.expand_dims(np.zeros(7), axis=1)
         self.robot.setPdGains(self.p_gain_ref, self.d_gain_ref)
-        self.robot.setPdTarget(angle[:-2], np.zeros([9]))
-        return self.robot.getFramePosition(11)  # return hand position
+        self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0., 0.], np.zeros([9]))
+        while self.realtime < 3.:
+            self.realtime = self.world.getWorldTime()
+            server.integrateWorldThreadSafe()
+            self.set_force(target_joint_angle=q, target_joint_vel=vel, p_gain=self.p_gain_ref, d_gain=self.d_gain_ref)
+            time.sleep(self.world.getTimeStep())
+
+        self.spawn_objects()
+        self.create_grid()
+
+    def spawn_objects(self):
+        # Objects
+        self.table: raisim.Box = self.world.addBox(x=0.8, y=0.8, z=0.2, mass=10, material='default')
+        table_pos = [0.5, 0, 0.1]
+        self.table.setPosition(table_pos)
+        self.table.setName("table")
+        self.cube: raisim.Box = self.world.addBox(x=0.04, y=0.04, z=0.03, mass=0.001, material='default')
+        self.cube.setName("cube")
+        self.cube.setAppearance("red")
+
+    def next_ep(self):
+        # TODO : add a condition to select all points and return a boolean value for seeing all points.
+        if self.grid_2_i == 15:
+            self.grid_1_i += 1
+            self.grid_2_i = 0
+        self.pick_pos = self.pick_points[self.grid_1_i]
+        self.cube.setPosition(self.pick_pos.copy())
+        self.place_pos = self.place_points[self.grid_2_i]
+        self.grid_2_i += 1
 
     def get_target_pos(self, cube_pos):
         pos_end = cube_pos
-        pos_end[0] += 0.012  # x-axis offset
-        pos_end[1] += np.sign(pos_end[1]) * 0.015  # y-axis offset
-        pos_end[2] += 0.13  # z-axis offset
+        pos_end[0] += 0.04  # x-axis offset
+        pos_end[1] += np.sign(pos_end[1]) * 0.05  # y-axis offset
+        pos_end[2] += 0.02  # z-axis offset
         return pos_end
+
+    def wait(self, target_pos):
+        if np.linalg.norm(target_pos - self.robot.getFramePosition(11)) <= 0.001:
+            print("Reached target pos")
+            return True
+        elif self.iterations >= (self.t_end - self.t_start) * 1000:
+            return True
+        else:
+            return False
+
+    def reach(self):
+        if self.set_targets:
+            self.home_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.home_pos.copy()
+            self.target_pos = self.get_target_pos(self.cube.getPosition())
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 5
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.reset_done = False
+            self.reached = True
+            self.iterations = 0
+            self.set_targets = True
+        else:
+            self.iterations += 1
+
+    def pick(self):
+        if self.set_targets:
+            self.open_gripper()
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 3
+            self.start_pos = self.robot.getFramePosition(11)
+            self.target_pos = self.start_pos.copy()
+            self.target_pos[2] -= 0.043
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.picked = True
+            self.reached = False
+            self.iterations = 0
+            self.set_targets = True
+        else:
+            self.iterations += 1
+
+    def lift(self):
+        if self.set_targets:
+            self.close_gripper()
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 2
+            self.start_pos = self.robot.getFramePosition(11)
+            self.target_pos = self.start_pos.copy()
+            self.target_pos[2] += 0.05
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.lifted = True
+            self.picked = False
+            self.set_targets = True
+            self.iterations = 0
+        else:
+            self.iterations += 1
+
+    def carry(self):
+        if self.set_targets:
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 5
+            self.start_pos = self.robot.getFramePosition(11)
+            self.target_pos = self.get_target_pos(self.place_pos)
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.carried = True
+            self.lifted = False
+            self.set_targets = True
+            self.iterations = 0
+        else:
+            self.iterations += 1
+
+    def lower(self):
+        if self.set_targets:
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 3
+            self.start_pos = self.robot.getFramePosition(11)
+            self.target_pos = self.start_pos.copy()
+            self.target_pos[2] -= 0.04
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.lowered = True
+            self.carried = False
+            self.set_targets = True
+            self.iterations = 0
+        else:
+            self.iterations += 1
+
+    def place(self):
+        if self.set_targets:
+            self.open_gripper()
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 2
+            self.start_pos = self.robot.getFramePosition(11)
+            self.target_pos = self.start_pos.copy()
+            self.target_pos[2] += 0.1
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.placed = True
+            self.lowered = False
+            self.set_targets = True
+            self.iterations = 0
+        else:
+            self.iterations += 1
+
+    def reset(self):
+        if self.set_targets:
+            self.close_gripper()
+            self.t_start = np.ceil(self.realtime)
+            self.t_end = self.t_start + 10
+            self.start_pos = self.robot.getFramePosition(11)
+            self.target_pos = self.home_pos.copy()
+            self.set_targets = False
+        if self.wait(target_pos=self.target_pos):
+            self.reset_done = True
+            self.placed = False
+            self.set_targets = True
+            self.iterations = 0
+            return True
+
+        else:
+            self.iterations += 1
+            return False
+
+    def step(self):
+        done = False
+        euler_start_ = [0., 0., 0.]
+        euler_end_ = [0., 0., 0.]
+
+        if self.reset_done:
+            self.reach()
+
+        elif self.reached:
+            self.pick()
+
+        elif self.picked:
+            self.lift()
+
+        elif self.lifted:
+            self.carry()
+
+        elif self.carried:
+            self.lower()
+
+        elif self.lowered:
+            self.place()
+
+        elif self.placed:
+            done = self.reset()
+
+        jac_res, twist_res = self.trajectory_planning(real_time=self.realtime, t_start=self.t_start, t_end=self.t_end,
+                                                      timestep=self.timestep,
+                                                      pos_start=self.start_pos, pos_end=self.target_pos,
+                                                      euler_start=euler_start_, euler_end=euler_end_)
+
+        self.control(jac_res, twist_res)
+        self.record_data()
+
+        return done
 
     def control(self, jac, twist):
         self.prev_dq_ref = self.dq_ref
         self.dq_ref = np.linalg.lstsq(jac, twist, rcond=None)[0]
         self.prev_q_ref = self.q_ref
-        self.q_ref = np.add(np.add(self.prev_dq_ref, self.dq_ref) * dt * 0.5, self.prev_q_ref)  # Integral
+        self.q_ref = np.add(np.add(self.prev_dq_ref, self.dq_ref) * self.world.getTimeStep() * 0.5, self.prev_q_ref)  # Integral
         self.set_force(target_joint_angle=self.q_ref, target_joint_vel=self.dq_ref,
                        p_gain=self.p_gain, d_gain=self.d_gain)
 
@@ -101,7 +353,7 @@ class Environment:
         twist[3] = deul_ref[0] + deul_ref[2] * math.sin(eul_ref[1])
         twist[4] = deul_ref[1] * math.cos(eul_ref[0]) - deul_ref[2] * math.cos(eul_ref[1]) * math.sin(eul_ref[0])
         twist[5] = deul_ref[1] * math.sin(eul_ref[0]) + deul_ref[2] * math.cos(eul_ref[0]) * math.sin(eul_ref[1])
-        q = env.robot.getGeneralizedCoordinate()
+        q = self.robot.getGeneralizedCoordinate()
         jac = Franka_Jacobian(q[0], q[1], q[2], q[3], q[4], q[5], q[6])
         return jac, twist
 
@@ -110,9 +362,15 @@ class Environment:
         joint_vel_cur = self.robot.getGeneralizedVelocity()
         joint_angle_err = np.hstack((target_joint_angle.squeeze(), self.gripper_angles)) - joint_angle_cur
         joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0, 0])) - joint_vel_cur
-
-        tau = p_gain * joint_angle_err + d_gain * joint_vel_err
-        self.robot.setGeneralizedForce(tau * 10)
+        # self.curr_joint_angle.append(joint_angle_cur[:-2])
+        # self.curr_joint_vel.append(joint_vel_cur[:-2])
+        # self.target_angle.append(target_joint_angle.squeeze())
+        # self.target_velocity.append(target_joint_vel.squeeze())
+        # ddqref = (self.dq_ref - self.prev_dq_ref) / self.timestep
+        # acc_ref = np.concatenate((ddqref.squeeze(), [0., 0.]))
+        # ineartia = self.robot.getMassMatrix()
+        tau = p_gain * joint_angle_err + d_gain * joint_vel_err + self.robot.getNonlinearities(self.world.getGravity())
+        self.robot.setGeneralizedForce(tau)
         # self.record_data()
 
     def open_gripper(self):
@@ -121,171 +379,40 @@ class Environment:
     def close_gripper(self):
         self.gripper_angles = [0.012, 0.012]
 
-    def done(self, target_pos):
-        if np.linalg.norm(target_pos - self.robot.getFramePosition(11)) <= 0.01:
-            return True
-        else:
-            return False
-
 
 if __name__ == '__main__':
     dt = 0.001
+    episode_no = 0
     env = Environment(timestep=dt)
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
+    env.reset_robot()
 
-    pos_start_ = env.reset_robot()
-    home_pos = pos_start_.copy()
-    target_pos_end_ = env.get_target_pos(env.cube.getPosition())
-    release_pos = [0.7, -0.2, 0.325]
-    euler_start_ = [0., 0., 0.]
-    # euler_end_ = [2, 2, 0.2]
-    ts = 0.1
-    reach_time = 5
-    te = ts + reach_time
-    reached = False
-    picked = False
-    lifted = False
-    moved = False
-    releasing = False
-    resetting = False
-    placed = True
+    # Trajectories = []
+    #
 
-    set_targets = True
-    iterations = 0
-    print("Starting the loop!")
-
+    env.next_ep()
+    #
     while True:
-        rt = env.world.getWorldTime()
+        env.realtime = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
-
-        if placed:
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Reached pick position")
-                reached = True
-                placed = False
-                iterations = 0
-            else:
-                iterations += 1
-
-        elif reached:
-            if set_targets:
-                env.open_gripper()
-                ts = np.ceil(rt)
-                te = ts + 3
-                pos_start_ = env.robot.getFramePosition(11)
-                target_pos_end_ = pos_start_.copy()
-                target_pos_end_[2] -= 0.045
-                set_targets = False
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Picked")
-                picked = True
-                reached = False
-                set_targets = True
-                iterations = 0
-            else:
-                iterations += 1
-
-        elif picked:
-            if set_targets:
-                env.close_gripper()
-                ts = np.ceil(rt)
-                te = ts + 2
-                pos_start_ = env.robot.getFramePosition(11)
-                target_pos_end_ = pos_start_.copy()
-                target_pos_end_[2] += 0.1
-                set_targets = False
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Lifted")
-                lifted = True
-                picked = False
-                set_targets = True
-                iterations = 0
-            else:
-                iterations += 1
-
-        elif lifted:
-            if set_targets:
-                ts = np.ceil(rt)
-                te = ts + 5
-                pos_start_ = env.robot.getFramePosition(11)
-                target_pos_end_ = env.get_target_pos(release_pos)
-                set_targets = False
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Moved")
-                moved = True
-                lifted = False
-                set_targets = True
-                iterations = 0
-            else:
-                iterations += 1
-
-        elif moved:
-            if set_targets:
-                ts = np.ceil(rt)
-                te = ts + 3
-                pos_start_ = env.robot.getFramePosition(11)
-                target_pos_end_ = pos_start_.copy()
-                target_pos_end_[2] -= 0.15
-                set_targets = False
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Lowered")
-                releasing = True
-                moved = False
-                set_targets = True
-                iterations = 0
-            else:
-                iterations += 1
-
-        elif releasing:
-            if set_targets:
-                env.open_gripper()
-                ts = np.ceil(rt)
-                te = ts + 2
-                pos_start_ = env.robot.getFramePosition(11)
-                target_pos_end_ = pos_start_.copy()
-                target_pos_end_[2] += 0.1
-                set_targets = False
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Released")
-                resetting = True
-                releasing = False
-                set_targets = True
-                iterations = 0
-            else:
-                iterations += 1
-
-        elif resetting:
-            if set_targets:
-                env.close_gripper()
-                ts = np.ceil(rt)
-                te = ts + 5
-                pos_start_ = env.robot.getFramePosition(11)
-                target_pos_end_ = home_pos.copy()
-                set_targets = False
-            if env.done(target_pos=target_pos_end_) or iterations >= (te - ts) * 1000:
-                print("Reset to home position")
-                placed = True
-                resetting = False
-                set_targets = True
-                iterations = 0
-
-                # TODO: For the next episode just change line below (cube position) and the (release_pos) variable
-                env.cube.setPosition([0.5, -0.2, 0.215])
-                pos_start_ = env.robot.getFramePosition(11)
-                home_pos = pos_start_.copy()
-                target_pos_end_ = env.get_target_pos(env.cube.getPosition())
-                ts = np.ceil(rt)
-                te = ts + 5
-            else:
-                iterations += 1
-
-        jac_res, twist_res = env.trajectory_planning(real_time=rt, t_start=ts, t_end=te, timestep=dt,
-                                                     pos_start=pos_start_, pos_end=target_pos_end_,
-                                                     euler_start=euler_start_, euler_end=euler_start_)
-
-        env.control(jac_res, twist_res)
-
+        # env.grid_points()
+        ep_done = env.step()
+        if ep_done:
+            print("Episode ", episode_no, "Finished.")
+            # Trajectories.append(env.trajectory_data)
+            env.next_ep()
         time.sleep(dt)
-    # np.save('traj.npy', env.trajectory_data)
-    # server.killServer()
+        # np.save('traj.npy', Trajectories)
+
+    for i in range(7):
+        plt.figure()
+        plt.plot(range(len(env.curr_joint_angle[3000:])), np.asarray(env.curr_joint_angle)[300:, i], label="Curr angle {}".format(i))
+        plt.plot(range(len(env.target_angle[3000:])), np.asarray(env.target_angle)[300:, i], label="target angle{}".format(i))
+        plt.legend()
+        plt.figure()
+        plt.plot(range(len(env.curr_joint_vel[3000:])), np.asarray(env.curr_joint_vel)[300:, i], label="Curr vel {}".format(i))
+        plt.plot(range(len(env.target_velocity[3000:])), np.asarray(env.target_velocity)[300:, i], label="target vel {}".format(i))
+        plt.legend()
+    plt.show()
+    server.killServer()
