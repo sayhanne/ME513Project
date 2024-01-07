@@ -11,7 +11,7 @@ from FuncPoly5th import FuncPoly5th
 
 
 class Environment:
-    def __init__(self, grid_path='/raisimLib/rsc/Panda/grid.urdf',
+    def __init__(self, grid_point_path='/raisimLib/rsc/Panda/sphere.urdf',
                  robot_path='/raisimLib/rsc/Panda/panda.urdf',
                  raisim_act_path="/../raisimLib/rsc/activation.raisim",
                  timestep=0.001):
@@ -20,16 +20,11 @@ class Environment:
         self.timestep = timestep
         self.world.setTimeStep(self.timestep)
         self.world.addGround()
-        grid_urdf_file = os.environ['WORKSPACE'] + grid_path
+        self.grid_urdf_file = os.environ['WORKSPACE'] + grid_point_path
         robot_urdf_file = os.environ['WORKSPACE'] + robot_path
         self.robot: raisim.ArticulatedSystem = self.world.addArticulatedSystem(robot_urdf_file)
-
-        # self.grid: raisim.ArticulatedSystem = self.world.addArticulatedSystem(grid_urdf_file)
-        # self.grid2: raisim.ArticulatedSystem = self.world.addArticulatedSystem(grid_urdf_file)
-
         self.cube = None
         self.table = None
-        self.cube_target = None
 
         # States
         self.reached = False
@@ -44,7 +39,6 @@ class Environment:
         self.home_pos = np.zeros(3)
         self.pick_pos = np.zeros(3)
         self.place_pos = np.zeros(3)
-        self.current_pos = np.zeros(3)
         self.target_pos = np.zeros(3)
         self.start_pos = np.zeros(3)
 
@@ -56,9 +50,9 @@ class Environment:
         self.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
 
         self.p_gain_ref = np.array([200, 1000, 200, 1500, 200, 200, 200, 10, 10])
-        self.d_gain_ref = np.array([10, 80, 10, 100, 10, 10, 10, 0.01, 0.01])
-        self.p_gain = np.array([300, 3000, 300, 3000, 300, 300, 300, 10, 10])
-        self.d_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
+        self.i_gain_ref = np.array([10, 80, 10, 100, 10, 10, 10, 0.01, 0.01])
+        self.p_gain = np.array([300, 3000, 300, 3000, 300, 300, 300, 100, 100])
+        self.i_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
 
         # q_ref, prev_q_ref, dq_ref, prev_dq_ref
         self.prev_dq_ref = np.zeros((7, 1))
@@ -67,6 +61,7 @@ class Environment:
         self.q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853]), axis=1)
 
         self.gripper_angles = [0., 0.]
+        self.euler = None
 
         # Grid settings
         self.pick_points = None
@@ -91,20 +86,18 @@ class Environment:
         grid_1, grid_2 = np.meshgrid(place_x_range, place_y_range)
         self.place_points = np.array(list(zip(grid_1.flatten(), grid_2.flatten(), [fixed_z] * len(grid_1.flatten()))))
 
-        # for i in range(len(self.pick_points)):
-        #     s = self.world.addCylinder(radius=0.0025, height=0.0001, mass=10)
-        #     pos = self.pick_points[i].copy()
-        #     pos[2] = 0.2 + 0.00006
-        #     s.setPosition(pos)
-        #     s.setAppearance("blue")
-        #     # self.grid_1_spheres.append(s)
-        # for i in range(len(self.place_points)):
-        #     s = self.world.addCylinder(radius=0.0025, height=0.0001, mass=10)
-        #     pos = self.place_points[i].copy()
-        #     pos[2] = 0.2 + 0.00006
-        #     s.setPosition(pos)
-        #     s.setAppearance("green")
-        #     # self.grid_2_spheres.append(s)
+        for p in range(len(self.pick_points)):
+            s: raisim.Visual = server.addVisualSphere(name="grid1_point_{}".format(p), radius=0.005, colorR=0, colorG=1,
+                                                      colorB=0)
+            pos = self.pick_points[p].copy()
+            pos[2] = 0.2 + 0.00006
+            s.setPosition(pos)
+        for p in range(len(self.place_points)):
+            s: raisim.Visual = server.addVisualSphere(name="grid2_point_{}".format(p), radius=0.005, colorR=0, colorG=0,
+                                                      colorB=1)
+            pos = self.place_points[p].copy()
+            pos[2] = 0.2 + 0.00006
+            s.setPosition(pos)
 
     def record_data(self):
         # time = self.world.getSimulationTime()self.
@@ -123,12 +116,13 @@ class Environment:
         # initial position
         q = np.expand_dims([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853], axis=1)
         vel = np.expand_dims(np.zeros(7), axis=1)
-        self.robot.setPdGains(self.p_gain_ref, self.d_gain_ref)
-        self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0., 0.], np.zeros([9]))
+        self.robot.setPdGains(self.p_gain_ref, self.i_gain_ref)
+        self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014], np.zeros([9]))
+        self.gripper_angles = [0.014, 0.014]
         while self.realtime < 3.:
             self.realtime = self.world.getWorldTime()
             server.integrateWorldThreadSafe()
-            self.set_force(target_joint_angle=q, target_joint_vel=vel, p_gain=self.p_gain_ref, d_gain=self.d_gain_ref)
+            self.set_force(target_joint_angle=q, target_joint_vel=vel, p_gain=self.p_gain_ref, i_gain=self.i_gain_ref)
             time.sleep(self.world.getTimeStep())
 
         self.spawn_objects()
@@ -157,7 +151,7 @@ class Environment:
     def get_target_pos(self, cube_pos):
         pos_end = cube_pos
         pos_end[0] += 0.04  # x-axis offset
-        pos_end[1] += np.sign(pos_end[1]) * 0.05  # y-axis offset
+        pos_end[1] += np.sign(pos_end[1]) * 0.06  # y-axis offset
         pos_end[2] += 0.02  # z-axis offset
         return pos_end
 
@@ -289,8 +283,6 @@ class Environment:
 
     def step(self):
         done = False
-        euler_start_ = [0., 0., 0.]
-        euler_end_ = [0., 0., 0.]
 
         if self.reset_done:
             self.reach()
@@ -316,7 +308,7 @@ class Environment:
         jac_res, twist_res = self.trajectory_planning(real_time=self.realtime, t_start=self.t_start, t_end=self.t_end,
                                                       timestep=self.timestep,
                                                       pos_start=self.start_pos, pos_end=self.target_pos,
-                                                      euler_start=euler_start_, euler_end=euler_end_)
+                                                      euler_start=self.euler, euler_end=self.euler)
 
         self.control(jac_res, twist_res)
         self.record_data()
@@ -324,12 +316,13 @@ class Environment:
         return done
 
     def control(self, jac, twist):
-        self.prev_dq_ref = self.dq_ref
+        self.prev_dq_ref = self.dq_ref.copy()
         self.dq_ref = np.linalg.lstsq(jac, twist, rcond=None)[0]
-        self.prev_q_ref = self.q_ref
-        self.q_ref = np.add(np.add(self.prev_dq_ref, self.dq_ref) * self.world.getTimeStep() * 0.5, self.prev_q_ref)  # Integral
+        self.prev_q_ref = self.q_ref.copy()
+        self.q_ref = np.add(np.add(self.prev_dq_ref, self.dq_ref) * self.world.getTimeStep() * 0.5,
+                            self.prev_q_ref)  # Integral
         self.set_force(target_joint_angle=self.q_ref, target_joint_vel=self.dq_ref,
-                       p_gain=self.p_gain, d_gain=self.d_gain)
+                       p_gain=self.p_gain, i_gain=self.i_gain)
 
     def trajectory_planning(self, real_time, t_start, t_end, timestep, pos_start, pos_end,
                             euler_start=None, euler_end=None):
@@ -357,19 +350,18 @@ class Environment:
         jac = Franka_Jacobian(q[0], q[1], q[2], q[3], q[4], q[5], q[6])
         return jac, twist
 
-    def set_force(self, target_joint_angle, target_joint_vel, p_gain, d_gain):
+    def set_force(self, target_joint_angle, target_joint_vel, p_gain, i_gain):
         joint_angle_cur = self.robot.getGeneralizedCoordinate()
         joint_vel_cur = self.robot.getGeneralizedVelocity()
         joint_angle_err = np.hstack((target_joint_angle.squeeze(), self.gripper_angles)) - joint_angle_cur
-        joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0, 0])) - joint_vel_cur
-        # self.curr_joint_angle.append(joint_angle_cur[:-2])
-        # self.curr_joint_vel.append(joint_vel_cur[:-2])
-        # self.target_angle.append(target_joint_angle.squeeze())
-        # self.target_velocity.append(target_joint_vel.squeeze())
+        joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0., 0.])) - joint_vel_cur
+        self.curr_joint_angle.append(joint_angle_cur[:-2])
+        self.curr_joint_vel.append(joint_vel_cur[:-2])
+        self.target_angle.append(target_joint_angle.squeeze())
+        self.target_velocity.append(target_joint_vel.squeeze())
         # ddqref = (self.dq_ref - self.prev_dq_ref) / self.timestep
         # acc_ref = np.concatenate((ddqref.squeeze(), [0., 0.]))
-        # ineartia = self.robot.getMassMatrix()
-        tau = p_gain * joint_angle_err + d_gain * joint_vel_err + self.robot.getNonlinearities(self.world.getGravity())
+        tau = p_gain * joint_angle_err + i_gain * joint_vel_err + self.robot.getNonlinearities(self.world.getGravity())
         self.robot.setGeneralizedForce(tau)
         # self.record_data()
 
@@ -377,7 +369,13 @@ class Environment:
         self.gripper_angles = [0.04, 0.04]
 
     def close_gripper(self):
-        self.gripper_angles = [0.012, 0.012]
+        self.gripper_angles = [0.014, 0.014]
+
+    def rot2eul(self, rot):
+        beta = -np.arcsin(rot[2, 0])
+        alpha = np.arctan2(rot[2, 1] / np.cos(beta), rot[2, 2] / np.cos(beta))
+        gamma = np.arctan2(rot[1, 0] / np.cos(beta), rot[0, 0] / np.cos(beta))
+        return np.array((alpha, beta, gamma))
 
 
 if __name__ == '__main__':
@@ -388,12 +386,12 @@ if __name__ == '__main__':
     server.launchServer(8080)
     env.reset_robot()
 
-    # Trajectories = []
-    #
+    rot_mat = env.robot.getFrameOrientation(11)
+    env.euler = env.rot2eul(rot_mat)
 
     env.next_ep()
     #
-    while True:
+    while env.realtime <= 10.:
         env.realtime = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
         # env.grid_points()
@@ -407,12 +405,16 @@ if __name__ == '__main__':
 
     for i in range(7):
         plt.figure()
-        plt.plot(range(len(env.curr_joint_angle[3000:])), np.asarray(env.curr_joint_angle)[300:, i], label="Curr angle {}".format(i))
-        plt.plot(range(len(env.target_angle[3000:])), np.asarray(env.target_angle)[300:, i], label="target angle{}".format(i))
+        plt.plot(range(len(env.curr_joint_angle[3000:])), np.asarray(env.curr_joint_angle)[3000:, i],
+                 label="Curr angle {}".format(i))
+        plt.plot(range(len(env.target_angle[3000:])), np.asarray(env.target_angle)[3000:, i],
+                 label="target angle{}".format(i))
         plt.legend()
         plt.figure()
-        plt.plot(range(len(env.curr_joint_vel[3000:])), np.asarray(env.curr_joint_vel)[300:, i], label="Curr vel {}".format(i))
-        plt.plot(range(len(env.target_velocity[3000:])), np.asarray(env.target_velocity)[300:, i], label="target vel {}".format(i))
+        plt.plot(range(len(env.curr_joint_vel[3000:])), np.asarray(env.curr_joint_vel)[3000:, i],
+                 label="Curr vel {}".format(i))
+        plt.plot(range(len(env.target_velocity[3000:])), np.asarray(env.target_velocity)[3000:, i],
+                 label="target vel {}".format(i))
         plt.legend()
     plt.show()
     server.killServer()
