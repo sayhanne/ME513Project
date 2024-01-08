@@ -11,8 +11,7 @@ from FuncPoly5th import FuncPoly5th
 
 
 class Environment:
-    def __init__(self, grid_point_path='/raisimLib/rsc/Panda/sphere.urdf',
-                 robot_path='/raisimLib/rsc/Panda/panda.urdf',
+    def __init__(self, robot_path='/raisimLib/rsc/Panda/panda.urdf',
                  raisim_act_path="/../raisimLib/rsc/activation.raisim",
                  timestep=0.001):
         raisim.World.setLicenseFile(os.path.dirname(os.path.abspath(__file__)) + raisim_act_path)
@@ -20,7 +19,6 @@ class Environment:
         self.timestep = timestep
         self.world.setTimeStep(self.timestep)
         self.world.addGround()
-        self.grid_urdf_file = os.environ['WORKSPACE'] + grid_point_path
         robot_urdf_file = os.environ['WORKSPACE'] + robot_path
         self.robot: raisim.ArticulatedSystem = self.world.addArticulatedSystem(robot_urdf_file)
         self.cube = None
@@ -49,10 +47,10 @@ class Environment:
         self.realtime = 0
         self.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
 
-        self.p_gain_ref = np.array([200, 1000, 200, 1500, 200, 200, 200, 10, 10])
-        self.i_gain_ref = np.array([10, 80, 10, 100, 10, 10, 10, 0.01, 0.01])
-        self.p_gain = np.array([300, 3000, 300, 3000, 300, 300, 300, 100, 100])
-        self.i_gain = np.array([10, 50, 10, 50, 10, 10, 10, 0.01, 0.01])
+        self.p_gain_ref = np.array([600, 1000, 600, 1000, 500, 50, 50, 50, 50])
+        self.i_gain_ref = np.array([120, 200, 120, 200, 100, 10, 10, 10, 10])
+        self.p_gain = np.array([2500, 5000, 3000, 5000, 1000, 100, 100, 100, 100])
+        self.i_gain = np.array([500, 1000, 600, 1000, 200, 20, 20, 20, 20])
 
         # q_ref, prev_q_ref, dq_ref, prev_dq_ref
         self.prev_dq_ref = np.zeros((7, 1))
@@ -76,13 +74,13 @@ class Environment:
     def create_grid(self):
         pick_x_range = np.linspace(0.4, 0.6, 4)
         pick_y_range = np.linspace(-0.1, -0.2, 4)
-        fixed_z = 0.215
+        fixed_z = 0.315
         grid_1, grid_2 = np.meshgrid(pick_x_range, pick_y_range)
         self.pick_points = np.array(list(zip(grid_1.flatten(), grid_2.flatten(), [fixed_z] * len(grid_1.flatten()))))
         # pick position
         place_x_range = np.linspace(0.4, 0.6, 4)
         place_y_range = np.linspace(0.1, 0.2, 4)
-        fixed_z = 0.215
+        fixed_z = 0.315
         grid_1, grid_2 = np.meshgrid(place_x_range, place_y_range)
         self.place_points = np.array(list(zip(grid_1.flatten(), grid_2.flatten(), [fixed_z] * len(grid_1.flatten()))))
 
@@ -90,18 +88,18 @@ class Environment:
             s: raisim.Visual = server.addVisualSphere(name="grid1_point_{}".format(p), radius=0.005, colorR=0, colorG=1,
                                                       colorB=0)
             pos = self.pick_points[p].copy()
-            pos[2] = 0.2 + 0.00006
+            pos[2] = 0.3 + 0.00006
             s.setPosition(pos)
         for p in range(len(self.place_points)):
             s: raisim.Visual = server.addVisualSphere(name="grid2_point_{}".format(p), radius=0.005, colorR=0, colorG=0,
                                                       colorB=1)
             pos = self.place_points[p].copy()
-            pos[2] = 0.2 + 0.00006
+            pos[2] = 0.3 + 0.00006
             s.setPosition(pos)
 
     def record_data(self):
         # time = self.world.getSimulationTime()self.
-        pos = self.robot.getFramePosition(11)
+        pos = self.robot.getFramePosition(7)
         angle = self.robot.getGeneralizedCoordinate()
         vel = self.robot.getGeneralizedVelocity()
         torque = self.robot.getGeneralizedForce()
@@ -119,10 +117,10 @@ class Environment:
         self.robot.setPdGains(self.p_gain_ref, self.i_gain_ref)
         self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014], np.zeros([9]))
         self.gripper_angles = [0.014, 0.014]
-        while self.realtime < 3.:
+        while self.realtime < 2.7:
             self.realtime = self.world.getWorldTime()
             server.integrateWorldThreadSafe()
-            self.set_force(target_joint_angle=q, target_joint_vel=vel, p_gain=self.p_gain_ref, i_gain=self.i_gain_ref)
+            self.set_force(target_joint_angle=q, target_joint_vel=vel, p_gain=self.p_gain, i_gain=self.i_gain)
             time.sleep(self.world.getTimeStep())
 
         self.spawn_objects()
@@ -130,8 +128,8 @@ class Environment:
 
     def spawn_objects(self):
         # Objects
-        self.table: raisim.Box = self.world.addBox(x=0.8, y=0.8, z=0.2, mass=10, material='default')
-        table_pos = [0.5, 0, 0.1]
+        self.table: raisim.Box = self.world.addBox(x=0.8, y=0.8, z=0.3, mass=10, material='default')
+        table_pos = [0.5, 0, 0.15]
         self.table.setPosition(table_pos)
         self.table.setName("table")
         self.cube: raisim.Box = self.world.addBox(x=0.04, y=0.04, z=0.03, mass=0.001, material='default')
@@ -150,13 +148,13 @@ class Environment:
 
     def get_target_pos(self, cube_pos):
         pos_end = cube_pos
-        pos_end[0] += 0.04  # x-axis offset
-        pos_end[1] += np.sign(pos_end[1]) * 0.06  # y-axis offset
-        pos_end[2] += 0.02  # z-axis offset
+        pos_end[0] += 0.014     # x-axis offset
+        # pos_end[1] += 0.0002
+        pos_end[2] += 0.16  # z-axis offset
         return pos_end
 
     def wait(self, target_pos):
-        if np.linalg.norm(target_pos - self.robot.getFramePosition(11)) <= 0.001:
+        if np.linalg.norm(target_pos - self.robot.getFramePosition(7)) <= 0.001:
             print("Reached target pos")
             return True
         elif self.iterations >= (self.t_end - self.t_start) * 1000:
@@ -166,11 +164,12 @@ class Environment:
 
     def reach(self):
         if self.set_targets:
-            self.home_pos = self.robot.getFramePosition(11)
+            self.home_pos = self.robot.getFramePosition(7)
             self.start_pos = self.home_pos.copy()
             self.target_pos = self.get_target_pos(self.cube.getPosition())
+            self.target_pos[2] += 0.05
             self.t_start = np.ceil(self.realtime)
-            self.t_end = self.t_start + 5
+            self.t_end = self.t_start + 6
             self.set_targets = False
         if self.wait(target_pos=self.target_pos):
             self.reset_done = False
@@ -185,7 +184,7 @@ class Environment:
             self.open_gripper()
             self.t_start = np.ceil(self.realtime)
             self.t_end = self.t_start + 3
-            self.start_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] -= 0.043
             self.set_targets = False
@@ -202,7 +201,7 @@ class Environment:
             self.close_gripper()
             self.t_start = np.ceil(self.realtime)
             self.t_end = self.t_start + 2
-            self.start_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] += 0.05
             self.set_targets = False
@@ -218,7 +217,7 @@ class Environment:
         if self.set_targets:
             self.t_start = np.ceil(self.realtime)
             self.t_end = self.t_start + 5
-            self.start_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.get_target_pos(self.place_pos)
             self.set_targets = False
         if self.wait(target_pos=self.target_pos):
@@ -233,7 +232,7 @@ class Environment:
         if self.set_targets:
             self.t_start = np.ceil(self.realtime)
             self.t_end = self.t_start + 3
-            self.start_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] -= 0.04
             self.set_targets = False
@@ -250,7 +249,7 @@ class Environment:
             self.open_gripper()
             self.t_start = np.ceil(self.realtime)
             self.t_end = self.t_start + 2
-            self.start_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] += 0.1
             self.set_targets = False
@@ -267,7 +266,7 @@ class Environment:
             self.close_gripper()
             self.t_start = np.ceil(self.realtime)
             self.t_end = self.t_start + 10
-            self.start_pos = self.robot.getFramePosition(11)
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.home_pos.copy()
             self.set_targets = False
         if self.wait(target_pos=self.target_pos):
@@ -319,8 +318,8 @@ class Environment:
         self.prev_dq_ref = self.dq_ref.copy()
         self.dq_ref = np.linalg.lstsq(jac, twist, rcond=None)[0]
         self.prev_q_ref = self.q_ref.copy()
-        self.q_ref = np.add(np.add(self.prev_dq_ref, self.dq_ref) * self.world.getTimeStep() * 0.5,
-                            self.prev_q_ref)  # Integral
+        self.q_ref = np.add(np.add(self.prev_dq_ref.copy(), self.dq_ref.copy()) * self.world.getTimeStep() * 0.5,
+                            self.prev_q_ref.copy())  # Integral
         self.set_force(target_joint_angle=self.q_ref, target_joint_vel=self.dq_ref,
                        p_gain=self.p_gain, i_gain=self.i_gain)
 
@@ -386,12 +385,12 @@ if __name__ == '__main__':
     server.launchServer(8080)
     env.reset_robot()
 
-    rot_mat = env.robot.getFrameOrientation(11)
+    rot_mat = env.robot.getFrameOrientation(7)
     env.euler = env.rot2eul(rot_mat)
 
     env.next_ep()
     #
-    while env.realtime <= 10.:
+    while env.realtime < 10.:
         env.realtime = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
         # env.grid_points()
