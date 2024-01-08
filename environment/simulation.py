@@ -114,7 +114,7 @@ class Environment:
         self.trajectory_data['torque'].append(torque)
         self.target_data['target_pos'].append(self.target_pos)
 
-    def reset_robot(self, tstart=0., t=2):
+    def reset_robot(self, tstart=0., t=2.7):
         self.prev_dq_ref = np.zeros((7, 1))
         self.dq_ref = np.zeros((7, 1))
         self.prev_q_ref = np.zeros((7, 1))
@@ -403,29 +403,37 @@ if __name__ == '__main__':
 
     env.next_ep()
     #
-    while episode_no < 256:
-        env.realtime = env.world.getWorldTime()
-        server.integrateWorldThreadSafe()
-        ep_done = env.step()
-        if ep_done:
-            # Reset to home position
-            env.reset_robot(tstart=env.realtime, T=3)
-            env.placed = False
-            env.reset_done = True
-            print("Episode ", episode_no, "Finished.")
 
-            # Next episode settings
-            env.next_ep()
-            episode_no += 1
-            Trajectories.append(env.trajectory_data)
-            Target_pos.append(env.target_data)
-            env.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
-            env.target_data = {'target_pos': []}
-            continue
-        time.sleep(dt)
-    np.save('traj.npy', Trajectories)
-    np.save("target_pos.npy", Target_pos)
-    server.killServer()
+    try:
+        while episode_no < 256:
+            env.realtime = env.world.getWorldTime()
+            server.integrateWorldThreadSafe()
+            ep_done = env.step()
+            if ep_done:
+                # Reset to home position
+                env.reset_robot(tstart=env.realtime, t=4)
+                env.placed = False
+                env.reset_done = True
+                print("Episode ", episode_no + 1, "Finished.")
+
+                # Next episode settings
+                env.next_ep()
+                episode_no += 1
+                Trajectories.append(env.trajectory_data)
+                Target_pos.append(env.target_data)
+                env.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
+                env.target_data = {'target_pos': []}
+                continue
+            time.sleep(dt)
+        np.save('traj.npy', Trajectories)
+        np.save("target_pos.npy", Target_pos)
+        server.killServer()
+    except:
+        print("Something went wrong in episode {} !!!".format(episode_no + 1))
+        np.save('traj.npy', Trajectories)
+        np.save("target_pos.npy", Target_pos)
+        server.killServer()
+
 
     # for i in range(7):
     #     plt.figure()
