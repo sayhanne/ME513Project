@@ -47,10 +47,10 @@ class Environment:
         self.realtime = 0
         self.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
 
-        self.p_gain_ref = np.array([600, 1000, 600, 1000, 500, 50, 50, 50, 50])
-        self.i_gain_ref = np.array([120, 200, 120, 200, 100, 10, 10, 10, 10])
-        self.p_gain = np.array([2500, 5000, 3000, 5000, 1000, 100, 100, 100, 100])
-        self.i_gain = np.array([500, 1000, 600, 1000, 200, 20, 20, 20, 20])
+        self.p_gain_ref = np.array([1000, 2500, 1000, 2500, 500, 50, 50, 50, 50])
+        self.i_gain_ref = np.array([200, 500, 200, 500, 100, 10, 10, 10, 10])
+        # self.p_gain = np.array([2000, 4000, 2000, 4000, 1000, 100, 100, 100, 100])
+        # self.i_gain = np.array([400, 800, 400, 800, 200, 20, 20, 20, 20])
 
         # q_ref, prev_q_ref, dq_ref, prev_dq_ref
         self.prev_dq_ref = np.zeros((7, 1))
@@ -112,15 +112,11 @@ class Environment:
 
     def reset_robot(self):
         # initial position
-        q = np.expand_dims([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853], axis=1)
-        vel = np.expand_dims(np.zeros(7), axis=1)
         self.robot.setPdGains(self.p_gain_ref, self.i_gain_ref)
-        self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014], np.zeros([9]))
-        self.gripper_angles = [0.014, 0.014]
         while self.realtime < 2.7:
             self.realtime = self.world.getWorldTime()
             server.integrateWorldThreadSafe()
-            self.set_force(target_joint_angle=q, target_joint_vel=vel, p_gain=self.p_gain, i_gain=self.i_gain)
+            self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014], vel_targets=np.zeros([9]))
             time.sleep(self.world.getTimeStep())
 
         self.spawn_objects()
@@ -148,8 +144,8 @@ class Environment:
 
     def get_target_pos(self, cube_pos):
         pos_end = cube_pos
-        pos_end[0] += 0.014     # x-axis offset
-        # pos_end[1] += 0.0002
+        pos_end[0] += 0.014  # x-axis offset
+        pos_end[1] -= 0.0002
         pos_end[2] += 0.16  # z-axis offset
         return pos_end
 
@@ -167,9 +163,9 @@ class Environment:
             self.home_pos = self.robot.getFramePosition(7)
             self.start_pos = self.home_pos.copy()
             self.target_pos = self.get_target_pos(self.cube.getPosition())
-            self.target_pos[2] += 0.05
+            self.target_pos[2] += 0.09
             self.t_start = np.ceil(self.realtime)
-            self.t_end = self.t_start + 6
+            self.t_end = self.t_start + 4
             self.set_targets = False
         if self.wait(target_pos=self.target_pos):
             self.reset_done = False
@@ -219,6 +215,7 @@ class Environment:
             self.t_end = self.t_start + 5
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.get_target_pos(self.place_pos)
+            self.target_pos[2] = self.start_pos[2]
             self.set_targets = False
         if self.wait(target_pos=self.target_pos):
             self.carried = True
@@ -310,7 +307,7 @@ class Environment:
                                                       euler_start=self.euler, euler_end=self.euler)
 
         self.control(jac_res, twist_res)
-        self.record_data()
+        # self.record_data()
 
         return done
 
@@ -320,8 +317,10 @@ class Environment:
         self.prev_q_ref = self.q_ref.copy()
         self.q_ref = np.add(np.add(self.prev_dq_ref.copy(), self.dq_ref.copy()) * self.world.getTimeStep() * 0.5,
                             self.prev_q_ref.copy())  # Integral
-        self.set_force(target_joint_angle=self.q_ref, target_joint_vel=self.dq_ref,
-                       p_gain=self.p_gain, i_gain=self.i_gain)
+        self.robot.setPdTarget(pos_targets=np.hstack((self.q_ref.squeeze(), self.gripper_angles)), vel_targets=np.hstack((self.dq_ref.squeeze(), [0., 0.])))
+        print(self.robot.getGeneralizedForce())
+        # self.set_force(target_joint_angle=self.q_ref, target_joint_vel=self.dq_ref,
+        #                p_gain=self.p_gain, i_gain=self.i_gain)
 
     def trajectory_planning(self, real_time, t_start, t_end, timestep, pos_start, pos_end,
                             euler_start=None, euler_end=None):
@@ -338,6 +337,7 @@ class Environment:
             eul_ref[dim], deul_ref[dim], ddeul_ref[dim] = FuncPoly5th(RealTime=real_time, tstart=t_start, te=t_end,
                                                                       z01=euler_start[dim], v01=0, a01=0,
                                                                       z02=euler_end[dim], v02=0, a02=0, dt=timestep)
+
         twist = np.zeros((6, 1))
         twist[0] = vel_ref[0]
         twist[1] = vel_ref[1]
@@ -349,20 +349,20 @@ class Environment:
         jac = Franka_Jacobian(q[0], q[1], q[2], q[3], q[4], q[5], q[6])
         return jac, twist
 
-    def set_force(self, target_joint_angle, target_joint_vel, p_gain, i_gain):
-        joint_angle_cur = self.robot.getGeneralizedCoordinate()
-        joint_vel_cur = self.robot.getGeneralizedVelocity()
-        joint_angle_err = np.hstack((target_joint_angle.squeeze(), self.gripper_angles)) - joint_angle_cur
-        joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0., 0.])) - joint_vel_cur
-        self.curr_joint_angle.append(joint_angle_cur[:-2])
-        self.curr_joint_vel.append(joint_vel_cur[:-2])
-        self.target_angle.append(target_joint_angle.squeeze())
-        self.target_velocity.append(target_joint_vel.squeeze())
-        # ddqref = (self.dq_ref - self.prev_dq_ref) / self.timestep
-        # acc_ref = np.concatenate((ddqref.squeeze(), [0., 0.]))
-        tau = p_gain * joint_angle_err + i_gain * joint_vel_err + self.robot.getNonlinearities(self.world.getGravity())
-        self.robot.setGeneralizedForce(tau)
-        # self.record_data()
+    # def set_force(self, target_joint_angle, target_joint_vel, p_gain, i_gain):
+    #     joint_angle_cur = self.robot.getGeneralizedCoordinate()
+    #     joint_vel_cur = self.robot.getGeneralizedVelocity()
+    #     joint_angle_err = np.hstack((target_joint_angle.squeeze(), self.gripper_angles)) - joint_angle_cur
+    #     joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0., 0.])) - joint_vel_cur
+    #     self.curr_joint_angle.append(joint_angle_cur[:-2])
+    #     self.curr_joint_vel.append(joint_vel_cur[:-2])
+    #     self.target_angle.append(target_joint_angle.squeeze())
+    #     self.target_velocity.append(target_joint_vel.squeeze())
+    #     # ddqref = (self.dq_ref - self.prev_dq_ref) / self.timestep
+    #     # acc_ref = np.concatenate((ddqref.squeeze(), [0., 0.]))
+    #     tau = p_gain * joint_angle_err + i_gain * joint_vel_err + self.robot.getNonlinearities(self.world.getGravity())
+    #     self.robot.setGeneralizedForce(tau)
+    # self.record_data()
 
     def open_gripper(self):
         self.gripper_angles = [0.04, 0.04]
@@ -390,7 +390,7 @@ if __name__ == '__main__':
 
     env.next_ep()
     #
-    while env.realtime < 10.:
+    while True:
         env.realtime = env.world.getWorldTime()
         server.integrateWorldThreadSafe()
         # env.grid_points()
@@ -402,18 +402,18 @@ if __name__ == '__main__':
         time.sleep(dt)
         # np.save('traj.npy', Trajectories)
 
-    for i in range(7):
-        plt.figure()
-        plt.plot(range(len(env.curr_joint_angle[3000:])), np.asarray(env.curr_joint_angle)[3000:, i],
-                 label="Curr angle {}".format(i))
-        plt.plot(range(len(env.target_angle[3000:])), np.asarray(env.target_angle)[3000:, i],
-                 label="target angle{}".format(i))
-        plt.legend()
-        plt.figure()
-        plt.plot(range(len(env.curr_joint_vel[3000:])), np.asarray(env.curr_joint_vel)[3000:, i],
-                 label="Curr vel {}".format(i))
-        plt.plot(range(len(env.target_velocity[3000:])), np.asarray(env.target_velocity)[3000:, i],
-                 label="target vel {}".format(i))
-        plt.legend()
-    plt.show()
+    # for i in range(7):
+    #     plt.figure()
+    #     plt.plot(range(len(env.curr_joint_angle[3000:])), np.asarray(env.curr_joint_angle)[3000:, i],
+    #              label="Curr angle {}".format(i))
+    #     plt.plot(range(len(env.target_angle[3000:])), np.asarray(env.target_angle)[3000:, i],
+    #              label="target angle{}".format(i))
+    #     plt.legend()
+    #     plt.figure()
+    #     plt.plot(range(len(env.curr_joint_vel[3000:])), np.asarray(env.curr_joint_vel)[3000:, i],
+    #              label="Curr vel {}".format(i))
+    #     plt.plot(range(len(env.target_velocity[3000:])), np.asarray(env.target_velocity)[3000:, i],
+    #              label="target vel {}".format(i))
+    #     plt.legend()
+    # plt.show()
     server.killServer()
