@@ -139,14 +139,17 @@ class Environment:
 
     def next_ep(self):
         # TODO : add a condition to select all points and return a boolean value for seeing all points.
+        self.pick_pos = self.pick_points[self.grid_1_i]
+        self.cube.setPosition(self.pick_pos.copy())
+        self.place_pos = self.place_points[self.grid_2_i]
+
+        # Update index
         if self.grid_2_i == 15:
             if self.grid_1_i < 15:
                 self.grid_1_i += 1
             self.grid_2_i = 0
-        self.pick_pos = self.pick_points[self.grid_1_i]
-        self.cube.setPosition(self.pick_pos.copy())
-        self.place_pos = self.place_points[self.grid_2_i]
-        self.grid_2_i += 1
+        else:
+            self.grid_2_i += 1
 
     def get_target_pos(self, cube_pos):
         offset = np.asarray(self.robot.getFramePosition(7)) - np.asarray(self.robot.getFramePosition(8))
