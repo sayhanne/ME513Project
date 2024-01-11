@@ -2,51 +2,65 @@ import math
 
 import numpy as np
 from scipy import linalg
-
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.nn import Parameter
+import visualizations
 
 class CESN():
     def __init__(self):
+        self.range = 7
         self.n_timestep = 160
         self.input_size = 3
-        self.output_size = 30
-        self.reservoir_size = 3000
+        self.output_size = 3 + 3 * self.range
+        self.reservoir_size = 6000
 
-        self.reservoir_scale = 0.7 * (100.0 / self.reservoir_size)
+        self.reservoir_scale = 0.95 * (100.0 / self.reservoir_size)
         self.input_scale = 1
         # self.input_scale = 0.2 / self.input_size
         # self.bias_scale = 1
-        self.alpha = 0.7
+        self.alpha = 0.8
 
         self.W_in = np.random.rand(self.reservoir_size, self.input_size + 1) - 0.5
         self.W_x = np.random.uniform(low=-1.0, high=1.0, size=(self.reservoir_size, self.reservoir_size)) - 0.5
-        self.W_out = np.zeros((self.output_size, self.reservoir_size + self.input_size + 1), dtype=np.float64)
+        # self.W_out = np.zeros((self.output_size, self.reservoir_size + self.input_size + 1), dtype=np.float64)
         self.initial_x = np.ones((self.reservoir_size, 1)) * 0.5
         self.reservoir_states = np.zeros((self.reservoir_size + self.input_size + 1, self.n_timestep))
 
         self.W_in *= self.input_scale
         self.W_x *= self.reservoir_scale
-        pass
-    
-    def dict_to_array(self, dict_data, dim):
+        self.W_out = Parameter(torch.randn(1 + self.input_size + self.reservoir_size, 1))
+
+    def dict_to_array(self, dict_data, range, first_key):
+        dim = 3 + 3 * range
         dataset = np.zeros((256, 160, dim))
-        
+
         keys = dict_data[0].keys()
         for traj_idx, traj in enumerate(dict_data):
             episode = np.zeros((160, dim))
+
             i = 0
             for key in keys:
-                item = np.array(traj[key])
-                episode[:, i:i + item.shape[1]] = item
-                i += item.shape[1]
-            dataset[traj_idx] = episode
+                if key == first_key:
 
+                    item = np.array(traj[key])
+                    episode[:, i:i + item.shape[1]] = item
+                    i += item.shape[1]
+                else:
+                    item = np.array(traj[key])
+                    item = item[:, 0:range]
+                    episode[:, i:i + item.shape[1]] = item
+                    i += item.shape[1]
+            dataset[traj_idx] = episode
+        print(dataset.shape)
         return dataset
-    
+
     def fix_timestep(self, data):
         target_length = 160
         keys = data[0].keys()
         for traj in data:
-            for key in keys :
+            for key in keys:
                 array = traj.get(key, [])  
                 
                 if len(array) > target_length:
@@ -54,14 +68,14 @@ class CESN():
                     traj[key] = array[:target_length]
 
     def load_data(self):
-        trajectory_data = np.load('traj.npy' , allow_pickle=True)
-        Target_data = np.load('target_pos.npy' , allow_pickle=True)
+        trajectory_data = np.load('traj.npy', allow_pickle=True)
+        Target_data = np.load('target_pos.npy', allow_pickle=True)
 
         self.fix_timestep(trajectory_data)
         self.fix_timestep(Target_data)
 
-        output = self.dict_to_array(trajectory_data, 30)
-        context = self.dict_to_array(Target_data, 3)
+        output = self.dict_to_array(trajectory_data, self.range, 'pos')
+        context = self.dict_to_array(Target_data, 0, 'target_pos')
 
         return context, output
         
@@ -88,16 +102,23 @@ class CESN():
         return X
 
     def train_readout(self, Xt, Yt, mode):
+
         Yt = Yt.T
         beta = 1e-8
+        X = Xt
+        Xt = torch.from_numpy(Xt)
+        Yt = torch.from_numpy(Yt)
+
+
         if mode == "ridge":
             print("Obtaining Wout in Ridge mode:")
-            self.Wout = linalg.solve(np.matmul(Xt, Xt.T) + beta * np.eye(1 + self.input_size + self.reservoir_size),
-                                     np.matmul(Xt, Yt.T)).T
-            # self.Wout = np.linalg.lstsq(np.matmul(Xt, Xt.T) + beta * np.eye(1 + self.input_size + self.reservoir_size),
-            #                             np.matmul(Xt, Yt.T).T, rcond=None)[0]
+            XtT = Xt.t()
+            XtXtT = torch.matmul(Xt, XtT)
+            identity_term = beta * torch.eye(1 + self.input_size + self.reservoir_size)
+            self.W_out = torch.linalg.solve(XtXtT + identity_term, torch.matmul(Xt, Yt.t())).t()
 
-        return self.Wout
+
+        return self.W_out
 
     def train(self, context, output):
         n_train_episodes = output.shape[0]
@@ -116,14 +137,17 @@ class CESN():
 
             X_all[:, eps * (self.n_timestep):(eps + 1) * (self.n_timestep)] = X_con
             Y_all[eps * self.n_timestep: (eps + 1) * (self.n_timestep), :] = Y
-            Y_train_truth = Y
+            Y_train_truth[eps] = Y
 
+        print("X-All shape", X_all.shape)
         self.W_out = self.train_readout(X_all, Y_all, mode='ridge')
         predicted_output = np.matmul(self.W_out, X_all).T
 
-        for eps in range(context.shape[0]):
-            Y_train_pred[eps] = predicted_output[eps*self.n_timestep:(eps+1)*self.n_timestep,:]
 
+        for eps in range(context.shape[0]):
+            Y_train_pred[eps] = predicted_output[eps*self.n_timestep:(eps+1)*self.n_timestep, :]
+
+        visualizations.visualize_truth_vs_predicted_trajectory(context,Y_train_truth, Y_train_pred)
         return math.sqrt(self.MSE(Y_train_truth, Y_train_pred)), self.NRMSE(Y_train_truth, Y_train_pred)
 
     def predict(self, context):
@@ -138,13 +162,12 @@ class CESN():
             con = context[k, sample_index].reshape(self.n_timestep, context_dim)
             u = con
             Xu = self.get_reservoir_states(u)
-            pred = np.matmul(self.Wout, Xu).T
+            pred = np.matmul(self.W_out, Xu).T
             Y_test_pred[k] = pred
 
         return Y_test_pred
 
     def test(self, context, output):
-
 
         Y_test_pred = np.empty((context.shape[0], self.n_timestep, self.output_size))
         Y_test_truth = np.empty((context.shape[0], self.n_timestep, self.output_size))
