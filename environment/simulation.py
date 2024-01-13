@@ -402,10 +402,10 @@ if __name__ == '__main__':
                 continue
             time.sleep(dt)
         np.save('traj.npy', Trajectories)
-        np.save("target_pos.npy", Context)
+        np.save('context.npy', Context)
         server.killServer()
     except:
         print("Something went wrong in episode {} !!!".format(episode_no + 1))
         np.save('traj.npy', Trajectories)
-        np.save("target_pos.npy", Context)
+        np.save('context.npy', Context)
         server.killServer()
