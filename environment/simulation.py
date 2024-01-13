@@ -14,6 +14,7 @@ class Environment:
     def __init__(self, robot_path='/raisimLib/rsc/Panda/panda.urdf',
                  raisim_act_path="/../raisimLib/rsc/activation.raisim",
                  timestep=0.001):
+
         raisim.World.setLicenseFile(os.path.dirname(os.path.abspath(__file__)) + raisim_act_path)
         self.world = raisim.World()
         self.timestep = timestep
@@ -27,29 +28,27 @@ class Environment:
         # States
         self.reached = False
         self.picked = False
-        self.lifted = False
         self.carried = False
-        self.lowered = False
         self.placed = False
+        self.released = False
         self.reset_done = True
         self.set_targets = True
 
-        self.home_pos = np.zeros(3)
         self.pick_pos = np.zeros(3)
         self.place_pos = np.zeros(3)
         self.target_pos = np.zeros(3)
         self.start_pos = np.zeros(3)
 
         self.iterations = 0
-        self.t_start = 0.1
+        self.t_start = 0
         self.t_end = 0
 
         self.realtime = 0
         self.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
         self.target_data = {'target_pos': []}
 
-        self.p_gain_ref = np.array([2000, 2500, 1000, 2500, 500, 100, 500, 20, 20])
-        self.i_gain_ref = np.array([400, 500, 200, 500, 100, 20, 100, 4, 4])
+        self.p_gain_ref = np.array([2000, 3000, 1000, 3000, 500, 500, 100, 20, 20])
+        self.i_gain_ref = np.array([400, 500, 200, 500, 100, 100, 20, 4, 4])
         self.robot.setPdGains(self.p_gain_ref, self.i_gain_ref)
         # self.p_gain = np.array([2000, 4000, 2000, 4000, 1000, 100, 100, 100, 100])
         # self.i_gain = np.array([400, 800, 400, 800, 200, 20, 20, 20, 20])
@@ -103,9 +102,9 @@ class Environment:
     def record_data(self):
         # time = self.world.getSimulationTime()self.
         pos = self.robot.getFramePosition(7)
-        angle = self.robot.getGeneralizedCoordinate()
-        vel = self.robot.getGeneralizedVelocity()
-        torque = self.robot.getGeneralizedForce()
+        angle = self.robot.getGeneralizedCoordinate()[:-2]  # Discard finger joints
+        vel = self.robot.getGeneralizedVelocity()[:-2]  # Discard finger joints
+        torque = self.robot.getGeneralizedForce()[:-2]  # Discard finger joints
 
         # self.trajectory_data['time'].append(time)
         self.trajectory_data['pos'].append(pos)
@@ -114,18 +113,19 @@ class Environment:
         self.trajectory_data['torque'].append(torque)
         self.target_data['target_pos'].append(self.target_pos)
 
-    def reset_robot(self, tstart=0., t=2.7):
-        self.prev_dq_ref = np.zeros((7, 1))
-        self.dq_ref = np.zeros((7, 1))
-        self.prev_q_ref = np.zeros((7, 1))
-        self.q_ref = np.expand_dims(np.array([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853]), axis=1)
+    def reset_robot(self, tstart=0, t=3):
         # home position
         while self.realtime - tstart < t:
             self.realtime = self.world.getWorldTime()
             server.integrateWorldThreadSafe()
-            self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014], vel_targets=np.zeros([9]))
+            self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014],
+                                   vel_targets=np.zeros([9]))
             time.sleep(self.world.getTimeStep())
         self.close_gripper()
+        self.prev_dq_ref = np.zeros((7, 1))
+        self.dq_ref = np.zeros((7, 1))
+        self.prev_q_ref = np.zeros((7, 1))
+        self.q_ref = np.expand_dims(self.robot.getGeneralizedCoordinate()[:-2], axis=1)
 
     def spawn_objects(self):
         # Objects
@@ -155,12 +155,12 @@ class Environment:
         offset = np.asarray(self.robot.getFramePosition(7)) - np.asarray(self.robot.getFramePosition(8))
         pos_end = cube_pos
         pos_end[0] += offset[0]  # x-axis offset
-        # pos_end[1] += 0.014  # y-axis offset
+        # pos_end[1] += offset[1]  # y-axis offset
         pos_end[2] += offset[2]  # z-axis offset
         return pos_end
 
-    def wait(self, target_pos):
-        # if np.linalg.norm(target_pos - self.robot.getFramePosition(7)) <= 0.001:
+    def wait(self):
+        # if np.linalg.norm(self.target_pos - self.robot.getFramePosition(7)) <= 0.001:
         #     print("Reached target pos")
         #     return True
         if self.iterations >= (self.t_end - self.t_start) * 1000:
@@ -170,14 +170,14 @@ class Environment:
 
     def reach(self):
         if self.set_targets:
-            self.home_pos = self.robot.getFramePosition(7)
-            self.start_pos = self.home_pos.copy()
+            self.open_gripper()
+            self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.get_target_pos(self.cube.getPosition())
-            self.target_pos[2] += 0.09
-            self.t_start = np.ceil(self.realtime)
+            self.target_pos[2] += 0.06
+            self.t_start = self.realtime
             self.t_end = self.t_start + 4
             self.set_targets = False
-        if self.wait(target_pos=self.target_pos):
+        if self.wait():
             self.reset_done = False
             self.reached = True
             self.iterations = 0
@@ -187,33 +187,16 @@ class Environment:
 
     def pick(self):
         if self.set_targets:
-            self.open_gripper()
-            self.t_start = np.ceil(self.realtime)
-            self.t_end = self.t_start + 2
-            self.start_pos = self.robot.getFramePosition(7)
-            self.target_pos = self.start_pos.copy()
-            self.target_pos[2] -= 0.043
-            self.set_targets = False
-        if self.wait(target_pos=self.target_pos):
-            self.picked = True
-            self.reached = False
-            self.iterations = 0
-            self.set_targets = True
-        else:
-            self.iterations += 1
-
-    def lift(self):
-        if self.set_targets:
             self.close_gripper()
-            self.t_start = np.ceil(self.realtime)
+            self.t_start = self.realtime
             self.t_end = self.t_start + 2
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] += 0.05
             self.set_targets = False
-        if self.wait(target_pos=self.target_pos):
-            self.lifted = True
-            self.picked = False
+        if self.wait():
+            self.picked = True
+            self.reached = False
             self.set_targets = True
             self.iterations = 0
         else:
@@ -221,31 +204,15 @@ class Environment:
 
     def carry(self):
         if self.set_targets:
-            self.t_start = np.ceil(self.realtime)
+            self.t_start = self.realtime
             self.t_end = self.t_start + 4
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.get_target_pos(self.place_pos)
             self.target_pos[2] = self.start_pos[2]
             self.set_targets = False
-        if self.wait(target_pos=self.target_pos):
+        if self.wait():
             self.carried = True
-            self.lifted = False
-            self.set_targets = True
-            self.iterations = 0
-        else:
-            self.iterations += 1
-
-    def lower(self):
-        if self.set_targets:
-            self.t_start = np.ceil(self.realtime)
-            self.t_end = self.t_start + 2
-            self.start_pos = self.robot.getFramePosition(7)
-            self.target_pos = self.start_pos.copy()
-            self.target_pos[2] -= 0.04
-            self.set_targets = False
-        if self.wait(target_pos=self.target_pos):
-            self.lowered = True
-            self.carried = False
+            self.picked = False
             self.set_targets = True
             self.iterations = 0
         else:
@@ -253,41 +220,38 @@ class Environment:
 
     def place(self):
         if self.set_targets:
-            self.open_gripper()
-            self.t_start = np.ceil(self.realtime)
+            self.t_start = self.realtime
             self.t_end = self.t_start + 2
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
-            self.target_pos[2] += 0.1
+            self.target_pos[2] -= 0.05
             self.set_targets = False
-        if self.wait(target_pos=self.target_pos):
+        if self.wait():
             self.placed = True
-            self.lowered = False
+            self.carried = False
+            self.set_targets = True
+            self.iterations = 0
+        else:
+            self.iterations += 1
+
+    def release(self):
+        if self.set_targets:
+            self.open_gripper()
+            self.t_start = self.realtime
+            self.t_end = self.t_start + 1
+            self.start_pos = self.robot.getFramePosition(7)
+            self.target_pos = self.start_pos.copy()
+            self.target_pos[2] += 0.025
+            self.set_targets = False
+        if self.wait():
+            self.released = True
+            self.placed = False
             self.set_targets = True
             self.iterations = 0
             return True
         else:
             self.iterations += 1
             return False
-
-    # def reset(self):
-    #     if self.set_targets:
-    #         self.close_gripper()
-    #         self.t_start = np.ceil(self.realtime)
-    #         self.t_end = self.t_start + 5
-    #         self.start_pos = self.robot.getFramePosition(7)
-    #         self.target_pos = self.home_pos.copy()
-    #         self.set_targets = False
-    #     if self.wait(target_pos=self.target_pos):
-    #         self.reset_done = True
-    #         self.placed = False
-    #         self.set_targets = True
-    #         self.iterations = 0
-    #         return True
-    #
-    #     else:
-    #         self.iterations += 1
-    #         return False
 
     def step(self):
         done = False
@@ -299,16 +263,13 @@ class Environment:
             self.pick()
 
         elif self.picked:
-            self.lift()
-
-        elif self.lifted:
             self.carry()
 
         elif self.carried:
-            self.lower()
+            self.place()
 
-        elif self.lowered:
-            done = self.place()
+        elif self.placed:
+            done = self.release()
 
         jac_res, twist_res = self.trajectory_planning(real_time=self.realtime, t_start=self.t_start, t_end=self.t_end,
                                                       timestep=self.timestep,
@@ -330,9 +291,6 @@ class Environment:
                             self.prev_q_ref.copy())  # Integral
         self.robot.setPdTarget(pos_targets=np.hstack((self.q_ref.squeeze(), self.gripper_angles)),
                                vel_targets=np.hstack((self.dq_ref.squeeze(), [0., 0.])))
-        # print(self.robot.getGeneralizedForce())
-        # self.set_force(target_joint_angle=self.q_ref, target_joint_vel=self.dq_ref,
-        #                p_gain=self.p_gain, i_gain=self.i_gain)
 
     def trajectory_planning(self, real_time, t_start, t_end, timestep, pos_start, pos_end,
                             euler_start=None, euler_end=None):
@@ -361,21 +319,6 @@ class Environment:
         jac = Franka_Jacobian(q[0], q[1], q[2], q[3], q[4], q[5], q[6])
         return jac, twist
 
-    # def set_force(self, target_joint_angle, target_joint_vel, p_gain, i_gain):
-    #     joint_angle_cur = self.robot.getGeneralizedCoordinate()
-    #     joint_vel_cur = self.robot.getGeneralizedVelocity()
-    #     joint_angle_err = np.hstack((target_joint_angle.squeeze(), self.gripper_angles)) - joint_angle_cur
-    #     joint_vel_err = np.hstack((target_joint_vel.squeeze(), [0., 0.])) - joint_vel_cur
-    #     self.curr_joint_angle.append(joint_angle_cur[:-2])
-    #     self.curr_joint_vel.append(joint_vel_cur[:-2])
-    #     self.target_angle.append(target_joint_angle.squeeze())
-    #     self.target_velocity.append(target_joint_vel.squeeze())
-    #     # ddqref = (self.dq_ref - self.prev_dq_ref) / self.timestep
-    #     # acc_ref = np.concatenate((ddqref.squeeze(), [0., 0.]))
-    #     tau = p_gain * joint_angle_err + i_gain * joint_vel_err + self.robot.getNonlinearities(self.world.getGravity())
-    #     self.robot.setGeneralizedForce(tau)
-    # self.record_data()
-
     def open_gripper(self):
         self.gripper_angles = [0.04, 0.04]
 
@@ -400,7 +343,7 @@ if __name__ == '__main__':
     env.create_grid()
 
     rot_mat = env.robot.getFrameOrientation(7)
-    env.euler = env.rot2eul(rot_mat)
+    env.euler = [0., 0., 0.]
     Trajectories = []
     Target_pos = []
 
@@ -414,8 +357,8 @@ if __name__ == '__main__':
             ep_done = env.step()
             if ep_done:
                 # Reset to home position
-                env.reset_robot(tstart=env.realtime, t=4)
-                env.placed = False
+                env.reset_robot(tstart=env.realtime)
+                env.released = False
                 env.reset_done = True
                 print("Episode ", episode_no + 1, "Finished.")
 
@@ -428,27 +371,11 @@ if __name__ == '__main__':
                 env.target_data = {'target_pos': []}
                 continue
             time.sleep(dt)
-        np.save('traj.npy', Trajectories)
-        np.save("target_pos.npy", Target_pos)
+        # np.save('traj.npy', Trajectories)
+        # np.save("target_pos.npy", Target_pos)
         server.killServer()
     except:
         print("Something went wrong in episode {} !!!".format(episode_no + 1))
-        np.save('traj.npy', Trajectories)
-        np.save("target_pos.npy", Target_pos)
+        # np.save('traj.npy', Trajectories)
+        # np.save("target_pos.npy", Target_pos)
         server.killServer()
-
-
-    # for i in range(7):
-    #     plt.figure()
-    #     plt.plot(range(len(env.curr_joint_angle[3000:])), np.asarray(env.curr_joint_angle)[3000:, i],
-    #              label="Curr angle {}".format(i))
-    #     plt.plot(range(len(env.target_angle[3000:])), np.asarray(env.target_angle)[3000:, i],
-    #              label="target angle{}".format(i))
-    #     plt.legend()
-    #     plt.figure()
-    #     plt.plot(range(len(env.curr_joint_vel[3000:])), np.asarray(env.curr_joint_vel)[3000:, i],
-    #              label="Curr vel {}".format(i))
-    #     plt.plot(range(len(env.target_velocity[3000:])), np.asarray(env.target_velocity)[3000:, i],
-    #              label="target vel {}".format(i))
-    #     plt.legend()
-    # plt.show()
