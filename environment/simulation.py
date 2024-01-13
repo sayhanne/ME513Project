@@ -44,8 +44,15 @@ class Environment:
         self.t_end = 0
 
         self.realtime = 0
-        self.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
-        self.target_data = {'target_pos': []}
+        # 4 different tasks
+        self.trajectory_data = {'reach': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
+                                'pick': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
+                                'carry': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
+                                'place': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}}
+        self.context_data = {'reach': {'start_pos': [], 'target_pos': []},
+                             'pick': {'start_pos': [], 'target_pos': []},
+                             'carry': {'start_pos': [], 'target_pos': []},
+                             'place': {'start_pos': [], 'target_pos': []}}
 
         self.p_gain_ref = np.array([2000, 3000, 1000, 3000, 500, 500, 100, 20, 20])
         self.i_gain_ref = np.array([400, 500, 200, 500, 100, 100, 20, 4, 4])
@@ -99,21 +106,23 @@ class Environment:
             pos[2] = 0.2 + 0.00006
             s.setPosition(pos)
 
-    def record_data(self):
-        # time = self.world.getSimulationTime()self.
+    def record_data(self, task_name):
         pos = self.robot.getFramePosition(7)
         angle = self.robot.getGeneralizedCoordinate()[:-2]  # Discard finger joints
         vel = self.robot.getGeneralizedVelocity()[:-2]  # Discard finger joints
         torque = self.robot.getGeneralizedForce()[:-2]  # Discard finger joints
 
-        # self.trajectory_data['time'].append(time)
-        self.trajectory_data['pos'].append(pos)
-        self.trajectory_data['joint_angle'].append(angle)
-        self.trajectory_data['joint_velocity'].append(vel)
-        self.trajectory_data['torque'].append(torque)
-        self.target_data['target_pos'].append(self.target_pos)
+        # Trajectory
+        self.trajectory_data[task_name]['pos'].append(pos)
+        self.trajectory_data[task_name]['joint_angle'].append(angle)
+        self.trajectory_data[task_name]['joint_velocity'].append(vel)
+        self.trajectory_data[task_name]['torque'].append(torque)
 
-    def reset_robot(self, tstart=0, t=3):
+        # Context
+        self.context_data[task_name]['start_pos'].append(self.start_pos)
+        self.context_data[task_name]['target_pos'].append(self.target_pos)
+
+    def reset_robot(self, tstart=0., t=3):
         # home position
         while self.realtime - tstart < t:
             self.realtime = self.world.getWorldTime()
@@ -278,7 +287,19 @@ class Environment:
 
         self.control(jac_res, twist_res)
         if self.step_counter % 100 == 0:
-            self.record_data()
+            # Record reach traj until reached
+            if self.reset_done:
+                self.record_data(task_name="reach")
+            # Record pick traj until picked
+            elif self.reached:
+                self.record_data(task_name="pick")
+            # Record carry traj until carried
+            elif self.picked:
+                self.record_data(task_name="carry")
+            # Record place traj until placed
+            elif self.carried:
+                self.record_data(task_name="place")
+
         self.step_counter += 1
 
         return done
@@ -325,6 +346,16 @@ class Environment:
     def close_gripper(self):
         self.gripper_angles = [0.014, 0.014]
 
+    def reset_data(self):
+        self.trajectory_data = {'reach': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
+                                'pick': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
+                                'carry': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
+                                'place': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}}
+        self.context_data = {'reach': {'start_pos': [], 'target_pos': []},
+                             'pick': {'start_pos': [], 'target_pos': []},
+                             'carry': {'start_pos': [], 'target_pos': []},
+                             'place': {'start_pos': [], 'target_pos': []}}
+
     def rot2eul(self, rot):
         beta = -np.arcsin(rot[2, 0])
         alpha = np.arctan2(rot[2, 1] / np.cos(beta), rot[2, 2] / np.cos(beta))
@@ -345,7 +376,7 @@ if __name__ == '__main__':
     rot_mat = env.robot.getFrameOrientation(7)
     env.euler = [0., 0., 0.]
     Trajectories = []
-    Target_pos = []
+    Context = []
 
     env.next_ep()
     #
@@ -366,16 +397,15 @@ if __name__ == '__main__':
                 env.next_ep()
                 episode_no += 1
                 Trajectories.append(env.trajectory_data)
-                Target_pos.append(env.target_data)
-                env.trajectory_data = {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []}
-                env.target_data = {'target_pos': []}
+                Context.append(env.context_data)
+                env.reset_data()
                 continue
             time.sleep(dt)
-        # np.save('traj.npy', Trajectories)
-        # np.save("target_pos.npy", Target_pos)
+        np.save('traj.npy', Trajectories)
+        np.save("target_pos.npy", Context)
         server.killServer()
     except:
         print("Something went wrong in episode {} !!!".format(episode_no + 1))
-        # np.save('traj.npy', Trajectories)
-        # np.save("target_pos.npy", Target_pos)
+        np.save('traj.npy', Trajectories)
+        np.save("target_pos.npy", Context)
         server.killServer()
