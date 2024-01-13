@@ -198,7 +198,7 @@ class Environment:
         if self.set_targets:
             self.close_gripper()
             self.t_start = self.realtime
-            self.t_end = self.t_start + 2
+            self.t_end = self.t_start + 4
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] += 0.05
@@ -230,7 +230,7 @@ class Environment:
     def place(self):
         if self.set_targets:
             self.t_start = self.realtime
-            self.t_end = self.t_start + 2
+            self.t_end = self.t_start + 4
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
             self.target_pos[2] -= 0.05
