@@ -54,8 +54,8 @@ class Environment:
                              'carry': {'start_pos': [], 'target_pos': []},
                              'place': {'start_pos': [], 'target_pos': []}}
 
-        self.p_gain_ref = np.array([2000, 3000, 1000, 3000, 500, 500, 100, 20, 20])
-        self.i_gain_ref = np.array([400, 500, 200, 500, 100, 100, 20, 4, 4])
+        self.p_gain_ref = np.array([2500, 4000, 1000, 4000, 500, 500, 100, 20, 20])
+        self.i_gain_ref = np.array([500, 800, 200, 800, 100, 100, 20, 4, 4])
         self.robot.setPdGains(self.p_gain_ref, self.i_gain_ref)
         # self.p_gain = np.array([2000, 4000, 2000, 4000, 1000, 100, 100, 100, 100])
         # self.i_gain = np.array([400, 800, 400, 800, 200, 20, 20, 20, 20])
@@ -250,7 +250,7 @@ class Environment:
             self.t_end = self.t_start + 1
             self.start_pos = self.robot.getFramePosition(7)
             self.target_pos = self.start_pos.copy()
-            self.target_pos[2] += 0.025
+            self.target_pos[2] += 0.05
             self.set_targets = False
         if self.wait():
             self.released = True
