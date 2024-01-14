@@ -3,6 +3,7 @@ import numpy as np
 n_timestep = 40
 n_joints = 7
 
+
 def merge_data():
     traj1 = np.load("../environment/traj.npy", allow_pickle=True)
     context1 = np.load("../environment/context.npy", allow_pickle=True)
@@ -19,7 +20,6 @@ def merge_data():
 
 
 def create_task_data(traj, context, key):
-
     # Extract key-value pairs into a new array of dictionaries
     task_traj_data = [d[key] for d in traj]
 
@@ -37,29 +37,6 @@ def fix_timestep(data):
             if len(array) > n_timestep:
                 traj[key] = array[:n_timestep]
     return data
-
-
-def dict_to_array(dict_data, n, first_key):
-    dim = 3 + 3 * n
-    dataset = np.zeros((256, n_timestep, dim))
-
-    keys = dict_data[0].keys()
-    for traj_idx, traj in enumerate(dict_data):
-        episode = np.zeros((n_timestep, dim))
-        i = 0
-        for key in keys:
-            if key == first_key:
-                item = np.array(traj[key])
-                episode[:, i:i + item.shape[1]] = item
-                i += item.shape[1]
-            else:
-                item = np.array(traj[key])
-                item = item[:, :n]
-                episode[:, i:i + item.shape[1]] = item
-                i += item.shape[1]
-        dataset[traj_idx] = episode
-    print(dataset.shape)
-    return dataset
 
 
 def load_data():
@@ -80,14 +57,48 @@ def load_data():
     t4t = fix_timestep(t4t)
     t4c = fix_timestep(t4c)
 
-    reach_traj = dict_to_array(t1t, 7, 'pos')
-    reach_context = dict_to_array(t1c, 1, 'start_pos')
-    pick_traj = dict_to_array(t2t, 7, 'pos')
-    pick_context = dict_to_array(t2c, 1, 'start_pos')
-    carry_traj = dict_to_array(t3t, 7, 'pos')
-    carry_context = dict_to_array(t3c, 1, 'start_pos')
-    place_traj = dict_to_array(t4t, 7, 'pos')
-    place_context = dict_to_array(t4c, 1, 'start_pos')
+    reach_traj = np.zeros((256, 40, 24))
+    reach_context = np.zeros((256, 40, 6))
+    pick_traj = np.zeros((256, 40, 24))
+    pick_context = np.zeros((256, 40, 6))
+    carry_traj = np.zeros((256, 40, 24))
+    carry_context = np.zeros((256, 40, 6))
+    place_traj = np.zeros((256, 40, 24))
+    place_context = np.zeros((256, 40, 6))
+
+    for i in range(256):
+        reach_traj[i, :, 0:3] = t1t[i]["pos"]
+        reach_traj[i, :, 3:10] = t1t[i]["joint_angle"]
+        reach_traj[i, :, 10:17] = t1t[i]["joint_velocity"]
+        reach_traj[i, :, 17:] = t1t[i]["torque"]
+
+        reach_context[i, :, 0:3] = t1c[i]["start_pos"]
+        reach_context[i, :, 3:] = t1c[i]["target_pos"]
+
+        pick_traj[i, :, 0:3] = t2t[i]["pos"]
+        pick_traj[i, :, 3:10] = t2t[i]["joint_angle"]
+        pick_traj[i, :, 10:17] = t2t[i]["joint_velocity"]
+        pick_traj[i, :, 17:] = t2t[i]["torque"]
+
+        pick_context[i, :, 0:3] = t2c[i]["start_pos"]
+        pick_context[i, :, 3:] = t2c[i]["target_pos"]
+
+        carry_traj[i, :, 0:3] = t3t[i]["pos"]
+        carry_traj[i, :, 3:10] = t3t[i]["joint_angle"]
+        carry_traj[i, :, 10:17] = t3t[i]["joint_velocity"]
+        carry_traj[i, :, 17:] = t3t[i]["torque"]
+
+        carry_context[i, :, 0:3] = t3c[i]["start_pos"]
+        carry_context[i, :, 3:] = t3c[i]["target_pos"]
+
+        place_traj[i, :, 0:3] = t4t[i]["pos"]
+        place_traj[i, :, 3:10] = t4t[i]["joint_angle"]
+        place_traj[i, :, 10:17] = t4t[i]["joint_velocity"]
+        place_traj[i, :, 17:] = t4t[i]["torque"]
+
+        place_context[i, :, 0:3] = t4c[i]["start_pos"]
+        place_context[i, :, 3:] = t4c[i]["target_pos"]
+
     np.save("reach_traj.npy", reach_traj)
     np.save("reach_context.npy", reach_context)
     np.save("pick_traj.npy", pick_traj)
