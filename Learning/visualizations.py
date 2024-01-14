@@ -29,7 +29,7 @@ def visualize_trajectory(target_positions, truth_trajectory, path):
 
 def visualize_truth_vs_predicted_trajectory(target_positions, truth_trajectory, estimated_trajectory, path):
     for eps, trajectory in enumerate(truth_trajectory):
-        target = target_positions[eps, :, :]
+        target = target_positions[eps, :, 3:6]
         end_effector_pos_truth = trajectory[:, 0:3]
         end_effector_pos_pred = estimated_trajectory[eps, :, 0:3]
 
@@ -47,6 +47,8 @@ def visualize_truth_vs_predicted_trajectory(target_positions, truth_trajectory, 
         plt.title(f'trajectory{eps}.png')
         plt.savefig(file_path)
         plt.close()
+        if eps == 5:
+            break
     print('Training plots are completed.')
 
 
