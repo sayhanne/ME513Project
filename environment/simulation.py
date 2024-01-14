@@ -370,7 +370,6 @@ if __name__ == '__main__':
     dt = 0.001
     episode_no = 0
     env = Environment(timestep=dt)
-    env.grid_1_i = 12
     env.isRealTime = REAL_TIME
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
@@ -406,11 +405,11 @@ if __name__ == '__main__':
                 continue
             if env.isRealTime:
                 time.sleep(dt)
-        np.save('traj3.npy', Trajectories)
-        np.save('context3.npy', Context)
+        np.save('traj.npy', Trajectories)
+        np.save('context.npy', Context)
         server.killServer()
     except:
         print("Something went wrong in episode {} !!!".format(episode_no + 1))
-        np.save('traj3.npy', Trajectories)
-        np.save('context3.npy', Context)
+        np.save('traj.npy', Trajectories)
+        np.save('context.npy', Context)
         server.killServer()
