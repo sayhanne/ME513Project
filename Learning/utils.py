@@ -2,16 +2,6 @@ import numpy as np
 
 n_timestep = 40
 n_joints = 7
-task1_traj_data = None
-task2_traj_data = None
-task3_traj_data = None
-task4_traj_data = None
-
-task1_context_data = None
-task2_context_data = None
-task3_context_data = None
-task4_context_data = None
-
 
 def merge_data():
     traj1 = np.load("../environment/traj.npy", allow_pickle=True)
@@ -28,28 +18,15 @@ def merge_data():
     np.save("contexts.npy", contexts)
 
 
-def create_task_data(traj, context):
-    global task1_context_data, task2_context_data, task3_context_data, task4_context_data
-    global task1_traj_data, task2_traj_data, task3_traj_data, task4_traj_data
-    # Keys to extract
-    task1_key = 'reach'
-    task2_key = 'pick'
-    task3_key = 'carry'
-    task4_key = 'place'
+def create_task_data(traj, context, key):
 
     # Extract key-value pairs into a new array of dictionaries
-    task1_traj_data = [d[task1_key] for d in traj]
-    task2_traj_data = [d[task2_key] for d in traj]
-    task3_traj_data = [d[task3_key] for d in traj]
-    task4_traj_data = [d[task4_key] for d in traj]
+    task_traj_data = [d[key] for d in traj]
 
     # Extract key-value pairs into a new array of dictionaries
-    task1_context_data = [d[task1_key] for d in context]
-    task2_context_data = [d[task2_key] for d in context]
-    task3_context_data = [d[task3_key] for d in context]
-    task4_context_data = [d[task4_key] for d in context]
+    task_context_data = [d[key] for d in context]
 
-    print()
+    return task_traj_data, task_context_data
 
 
 def fix_timestep(data):
@@ -88,16 +65,20 @@ def dict_to_array(dict_data, n, first_key):
 def load_data():
     trajectory_data = np.load('trajectories.npy', allow_pickle=True)
     context_data = np.load('contexts.npy', allow_pickle=True)
-    create_task_data(trajectory_data, context_data)
 
-    t1t = fix_timestep(task1_traj_data)
-    t1c = fix_timestep(task1_context_data)
-    t2t = fix_timestep(task2_traj_data)
-    t2c = fix_timestep(task2_context_data)
-    t3t = fix_timestep(task3_traj_data)
-    t3c = fix_timestep(task3_context_data)
-    t4t = fix_timestep(task4_traj_data)
-    t4c = fix_timestep(task4_context_data)
+    t1t, t1c = create_task_data(trajectory_data, context_data, key="reach")
+    t2t, t2c = create_task_data(trajectory_data, context_data, key="pick")
+    t3t, t3c = create_task_data(trajectory_data, context_data, key="carry")
+    t4t, t4c = create_task_data(trajectory_data, context_data, key="place")
+
+    t1t = fix_timestep(t1t)
+    t1c = fix_timestep(t1c)
+    t2t = fix_timestep(t2t)
+    t2c = fix_timestep(t2c)
+    t3t = fix_timestep(t3t)
+    t3c = fix_timestep(t3c)
+    t4t = fix_timestep(t4t)
+    t4c = fix_timestep(t4c)
 
     reach_traj = dict_to_array(t1t, 7, 'pos')
     reach_context = dict_to_array(t1c, 1, 'start_pos')
