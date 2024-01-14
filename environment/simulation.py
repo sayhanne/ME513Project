@@ -44,6 +44,7 @@ class Environment:
         self.t_end = 0
 
         self.realtime = 0
+        self.isRealTime = False
         # 4 different tasks
         self.trajectory_data = {'reach': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
                                 'pick': {'pos': [], 'joint_angle': [], 'joint_velocity': [], 'torque': []},
@@ -129,7 +130,8 @@ class Environment:
             server.integrateWorldThreadSafe()
             self.robot.setPdTarget([0, -0.785, 0, -2.356, 0, 1.65806, 0.7853, 0.014, 0.014],
                                    vel_targets=np.zeros([9]))
-            time.sleep(self.world.getTimeStep())
+            if self.isRealTime:
+                time.sleep(self.world.getTimeStep())
         self.close_gripper()
         self.prev_dq_ref = np.zeros((7, 1))
         self.dq_ref = np.zeros((7, 1))
@@ -364,9 +366,11 @@ class Environment:
 
 
 if __name__ == '__main__':
+    REAL_TIME = False
     dt = 0.001
     episode_no = 0
     env = Environment(timestep=dt)
+    env.isRealTime = REAL_TIME
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
     env.reset_robot()
@@ -379,7 +383,6 @@ if __name__ == '__main__':
     Context = []
 
     env.next_ep()
-    #
 
     try:
         while episode_no < 256:
@@ -400,7 +403,8 @@ if __name__ == '__main__':
                 Context.append(env.context_data)
                 env.reset_data()
                 continue
-            time.sleep(dt)
+            if env.isRealTime:
+                time.sleep(dt)
         np.save('traj.npy', Trajectories)
         np.save('context.npy', Context)
         server.killServer()
