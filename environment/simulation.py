@@ -370,6 +370,7 @@ if __name__ == '__main__':
     dt = 0.001
     episode_no = 0
     env = Environment(timestep=dt)
+    env.grid_1_i = 12
     env.isRealTime = REAL_TIME
     server = raisim.RaisimServer(env.world)
     server.launchServer(8080)
@@ -378,14 +379,14 @@ if __name__ == '__main__':
     env.create_grid()
 
     rot_mat = env.robot.getFrameOrientation(7)
-    env.euler = [0., 0., 0.]
+    env.euler = env.rot2eul(rot_mat)
     Trajectories = []
     Context = []
 
     env.next_ep()
 
     try:
-        while episode_no < 256:
+        while episode_no < 64:
             env.realtime = env.world.getWorldTime()
             server.integrateWorldThreadSafe()
             ep_done = env.step()
@@ -405,11 +406,11 @@ if __name__ == '__main__':
                 continue
             if env.isRealTime:
                 time.sleep(dt)
-        np.save('traj.npy', Trajectories)
-        np.save('context.npy', Context)
+        np.save('traj3.npy', Trajectories)
+        np.save('context3.npy', Context)
         server.killServer()
     except:
         print("Something went wrong in episode {} !!!".format(episode_no + 1))
-        np.save('traj.npy', Trajectories)
-        np.save('context.npy', Context)
+        np.save('traj3.npy', Trajectories)
+        np.save('context3.npy', Context)
         server.killServer()
